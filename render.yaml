@@ -3,7 +3,7 @@ services:
     name: meeting-assistant-backend
     env: node
     # Instala dependências (incluindo dev) e compila apenas o backend
-    buildCommand: pnpm --filter backend build
+    buildCommand: pnpm build:backend
     # Inicia o backend usando o script definido no package.json raiz ou do app
     startCommand: pnpm --filter backend start
     envVars:

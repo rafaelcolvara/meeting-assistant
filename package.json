@@ -5,6 +5,7 @@
   "packageManager": "pnpm@9.15.4",
   "scripts": {
     "build": "pnpm -r build",
+    "build:backend": "pnpm --filter backend build",
     "start": "pnpm --filter backend start",
     "dev": "pnpm --filter backend start:dev",
     "dev:frontend": "pnpm --filter frontend dev",
