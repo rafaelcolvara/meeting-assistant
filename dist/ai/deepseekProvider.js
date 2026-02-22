@@ -18,10 +18,17 @@ export class DeepSeekProvider {
     async transcribeAudio(_filePath) {
         throw new Error("Transcription is not supported with AI_PROVIDER=deepseek in this app. Use AI_PROVIDER=openai for audio transcription.");
     }
-    async generateSummary(transcript, translate) {
+    async generateSummaries(transcript, detectedLanguage) {
         const client = this.getClient();
         const model = process.env.DEEPSEEK_SUMMARY_MODEL ?? "deepseek-chat";
-        const prompt = buildSummaryPrompt(transcript, translate);
+        const summaryInDetectedLanguage = await this.generateSingleSummary(client, model, buildSummaryPrompt(transcript, detectedLanguage, detectedLanguage));
+        const summaryInEnglish = await this.generateSingleSummary(client, model, buildSummaryPrompt(transcript, detectedLanguage, "English"));
+        return {
+            summaryInDetectedLanguage,
+            summaryInEnglish,
+        };
+    }
+    async generateSingleSummary(client, model, prompt) {
         const response = await client.chat.completions.create({
             model,
             messages: [{ role: "user", content: prompt }],

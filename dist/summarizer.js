@@ -1,6 +1,6 @@
 import { getAIProvider } from "./ai/providerFactory.js";
-export async function generateSummary(transcript, translate) {
+export async function generateSummaries(transcript, detectedLanguage) {
     const provider = getAIProvider();
-    return provider.generateSummary(transcript, translate);
+    return provider.generateSummaries(transcript, detectedLanguage);
 }
 //# sourceMappingURL=summarizer.js.map

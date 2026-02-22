@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: meeting-assistant-backend
+    env: node
+    plan: starter
+    rootDir: apps/backend
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter backend prisma:generate && pnpm --filter backend build
+    startCommand: pnpm --filter backend start
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: DATABASE_URL
+        fromDatabase:
+          name: meeting-assistant-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: REFRESH_SECRET
+        generateValue: true
+      - key: CORS_ORIGIN
+        value: https://meeting-assistant-frontend.onrender.com
+      - key: NEXT_PUBLIC_API_URL
+        value: https://meeting-assistant-backend.onrender.com
+
+  - type: web
+    name: meeting-assistant-frontend
+    env: node
+    plan: starter
+    rootDir: apps/frontend
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter frontend build
+    startCommand: pnpm --filter frontend start
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: NEXT_PUBLIC_API_URL
+        value: https://meeting-assistant-backend.onrender.com
+
+databases:
+  - name: meeting-assistant-db
+    plan: starter
+    databaseName: meeting_assistant
+    user: meeting_assistant

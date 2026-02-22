@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Meeting Assistant</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>Meeting Assistant</h1>
+      <p>Grave uma reunião, salve o áudio e processe automaticamente.</p>
+
+      <section class="controls">
+        <button id="startBtn" type="button">Iniciar gravação</button>
+        <button id="stopBtn" type="button" disabled>Parar gravação</button>
+        <button id="saveBtn" type="button" disabled>Salvar e processar</button>
+      </section>
+
+      <p id="status">Status: pronto</p>
+
+      <section>
+        <h2>Áudio gravado</h2>
+        <audio id="audioPlayer" controls></audio>
+      </section>
+
+      <section>
+        <h2>Resultado</h2>
+        <p><strong>Arquivo salvo:</strong> <span id="savedFileName">-</span></p>
+        <p><strong>Idioma detectado:</strong> <span id="detectedLanguage">-</span></p>
+
+        <h3>Transcrição</h3>
+        <pre id="transcript">-</pre>
+
+        <h3>Resumo (idioma detectado)</h3>
+        <pre id="summaryDetected">-</pre>
+
+        <h3>Summary (English)</h3>
+        <pre id="summaryEnglish">-</pre>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

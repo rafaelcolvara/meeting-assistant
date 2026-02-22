@@ -1,7 +1,15 @@
 export type AIProviderName = "openai" | "deepseek";
-export interface AIProvider {
-    transcribeAudio(filePath: string): Promise<string>;
-    generateSummary(transcript: string, translate: boolean): Promise<string>;
+export interface TranscriptionResult {
+    transcript: string;
+    detectedLanguage: string;
 }
-export declare function buildSummaryPrompt(transcript: string, translate: boolean): string;
+export interface SummariesResult {
+    summaryInDetectedLanguage: string;
+    summaryInEnglish: string;
+}
+export interface AIProvider {
+    transcribeAudio(filePath: string): Promise<TranscriptionResult>;
+    generateSummaries(transcript: string, detectedLanguage: string): Promise<SummariesResult>;
+}
+export declare function buildSummaryPrompt(transcript: string, detectedLanguage: string, targetLanguage: string): string;
 //# sourceMappingURL=types.d.ts.map

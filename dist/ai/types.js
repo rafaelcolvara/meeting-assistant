@@ -1,9 +1,11 @@
-export function buildSummaryPrompt(transcript, translate) {
+export function buildSummaryPrompt(transcript, detectedLanguage, targetLanguage) {
     return `
 You are a senior technical meeting analyst.
 
-Analyze the following meeting transcript and generate:
+The transcript language is: ${detectedLanguage}.
+Create a complete meeting summary in ${targetLanguage}.
 
+Generate the response with these sections:
 1. Executive Summary
 2. Key Decisions
 3. Action Items
@@ -12,8 +14,6 @@ Analyze the following meeting transcript and generate:
 
 Transcript:
 ${transcript}
-
-${translate ? "Translate the final output to Portuguese." : ""}
 `;
 }
 //# sourceMappingURL=types.js.map
