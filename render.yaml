@@ -2,12 +2,13 @@ services:
   - type: web
     name: meeting-assistant-backend
     env: node
-    # Instala dependências (incluindo dev) e compila apenas o backend
-    buildCommand: pnpm build:backend
-    # Inicia o backend usando o script definido no package.json raiz ou do app
+    rootDir: .
+    buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm --filter backend prisma:generate && pnpm --filter backend build
     startCommand: pnpm --filter backend start
     envVars:
       - key: NPM_CONFIG_PRODUCTION
         value: 'false'
+      - key: NODE_ENV
+        value: production
       - key: NODE_VERSION
         value: 22.22.0
