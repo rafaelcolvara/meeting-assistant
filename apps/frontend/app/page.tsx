@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
-import { api } from '../lib/api';
 
 const MAX_RECORDING_MS = 2 * 60 * 60 * 1000;
 
@@ -12,6 +11,20 @@ type ProcessResult = {
   summaryInDetectedLanguage: string;
   summaryInEnglish: string;
 };
+
+function normalizeProcessResult(payload: unknown): ProcessResult {
+  const data = (payload && typeof payload === 'object' && 'data' in payload
+    ? (payload as { data: unknown }).data
+    : payload) as Record<string, unknown>;
+
+  return {
+    savedFileName: String(data.savedFileName ?? ''),
+    detectedLanguage: String(data.detectedLanguage ?? ''),
+    transcript: String(data.transcript ?? data.transcription ?? ''),
+    summaryInDetectedLanguage: String(data.summaryInDetectedLanguage ?? ''),
+    summaryInEnglish: String(data.summaryInEnglish ?? ''),
+  };
+}
 
 export default function HomePage() {
   const [status, setStatus] = useState('pronto');
@@ -85,16 +98,6 @@ export default function HomePage() {
     }
   }
 
-  async function blobToBase64(blob: Blob) {
-    const arrayBuffer = await blob.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i += 1) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
-  }
-
   async function saveAndProcess() {
     if (!recordedBlob) {
       return;
@@ -108,15 +111,26 @@ export default function HomePage() {
     setStatus('salvando e processando...');
 
     try {
-      const audioBase64 = await blobToBase64(recordedBlob);
-      const payload = {
-        audioBase64,
-        mimeType: recordedBlob.type || 'audio/webm',
-        durationMs: recordedDurationMs,
-      };
+      const timestamp = Date.now();
+      const filename = `recording-${timestamp}.webm`;
+      const file = new File([recordedBlob], filename, {
+        type: recordedBlob.type || 'audio/webm',
+      });
 
-      const response = await api.post<ProcessResult>('/api/process-audio', payload);
-      setResult(response.data);
+      const formData = new FormData();
+      formData.append('audio', file);
+
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/process-audio`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`falha ao processar áudio (${response.status})`);
+      }
+
+      const payload = (await response.json()) as unknown;
+      setResult(normalizeProcessResult(payload));
       setStatus('processamento concluído');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'erro inesperado';
