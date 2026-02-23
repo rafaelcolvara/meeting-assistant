@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
-import { api } from '../lib/api';
 
 const MAX_RECORDING_MS = 2 * 60 * 60 * 1000;
 
@@ -85,16 +84,6 @@ export default function HomePage() {
     }
   }
 
-  async function blobToBase64(blob: Blob) {
-    const arrayBuffer = await blob.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i += 1) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
-  }
-
   async function saveAndProcess() {
     if (!recordedBlob) {
       return;
@@ -108,15 +97,26 @@ export default function HomePage() {
     setStatus('salvando e processando...');
 
     try {
-      const audioBase64 = await blobToBase64(recordedBlob);
-      const payload = {
-        audioBase64,
-        mimeType: recordedBlob.type || 'audio/webm',
-        durationMs: recordedDurationMs,
-      };
+      const timestamp = Date.now();
+      const filename = `recording-${timestamp}.webm`;
+      const file = new File([recordedBlob], filename, {
+        type: recordedBlob.type || 'audio/webm',
+      });
 
-      const response = await api.post<ProcessResult>('/api/process-audio', payload);
-      setResult(response.data);
+      const formData = new FormData();
+      formData.append('audio', file);
+
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/process-audio`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`falha ao processar áudio (${response.status})`);
+      }
+
+      const data = (await response.json()) as ProcessResult;
+      setResult(data);
       setStatus('processamento concluído');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'erro inesperado';
