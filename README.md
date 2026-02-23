@@ -139,3 +139,13 @@ pnpm dev:frontend
 - Core endpoint kept: `POST /api/process-audio`
 - Existing AI provider behavior preserved and moved into Nest service layer
 - Legacy static client assets kept under `apps/backend/public` for compatibility during transition
+
+
+## Docker Postgres
+docker run -d \
+  --name postgres \
+  -p 5432:5432 \
+  -e POSTGRES_USER=meeting_assistant \
+  -e POSTGRES_PASSWORD=meeting_assistant \
+  -e POSTGRES_DB=meeting_assistant \
+  postgres:latest

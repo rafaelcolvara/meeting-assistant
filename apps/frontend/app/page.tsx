@@ -163,6 +163,14 @@ export default function HomePage() {
 
       <h3>Transcrição</h3>
       <pre>{result?.transcript ?? '-'}</pre>
+
+      <h3>Resumo em português</h3>
+      <pre>{result?.summaryInDetectedLanguage ?? '-'}</pre>
+
+      <h3>Resumo em inglês</h3>
+      <pre>{result?.summaryInEnglish ?? '-'}</pre>
+
+
     </main>
   );
 }
