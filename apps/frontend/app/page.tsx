@@ -5,7 +5,11 @@ import { useMemo, useRef, useState } from 'react';
 const MAX_RECORDING_MS = 2 * 60 * 60 * 1000;
 
 type ProcessResult = {
-  transcription: string;
+  savedFileName: string;
+  detectedLanguage: string;
+  transcript: string;
+  summaryInDetectedLanguage: string;
+  summaryInEnglish: string;
 };
 
 function normalizeProcessResult(payload: unknown): ProcessResult {
@@ -158,7 +162,7 @@ export default function HomePage() {
       <h2>Resultado</h2>
 
       <h3>Transcrição</h3>
-      <pre>{result?.transcription ?? '-'}</pre>
+      <pre>{result?.transcript ?? '-'}</pre>
     </main>
   );
 }
