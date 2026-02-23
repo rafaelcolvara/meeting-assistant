@@ -5,11 +5,7 @@ import { useMemo, useRef, useState } from 'react';
 const MAX_RECORDING_MS = 2 * 60 * 60 * 1000;
 
 type ProcessResult = {
-  savedFileName: string;
-  detectedLanguage: string;
-  transcript: string;
-  summaryInDetectedLanguage: string;
-  summaryInEnglish: string;
+  transcription: string;
 };
 
 export default function HomePage() {
@@ -146,17 +142,9 @@ export default function HomePage() {
       {audioPreviewUrl ? <audio controls src={audioPreviewUrl} /> : null}
 
       <h2>Resultado</h2>
-      <p>Arquivo salvo: {result?.savedFileName ?? '-'}</p>
-      <p>Idioma detectado: {result?.detectedLanguage ?? '-'}</p>
 
       <h3>Transcrição</h3>
-      <pre>{result?.transcript ?? '-'}</pre>
-
-      <h3>Resumo (idioma detectado)</h3>
-      <pre>{result?.summaryInDetectedLanguage ?? '-'}</pre>
-
-      <h3>Summary (English)</h3>
-      <pre>{result?.summaryInEnglish ?? '-'}</pre>
+      <pre>{result?.transcription ?? '-'}</pre>
     </main>
   );
 }
