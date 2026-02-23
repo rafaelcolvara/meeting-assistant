@@ -8,6 +8,20 @@ type ProcessResult = {
   transcription: string;
 };
 
+function normalizeProcessResult(payload: unknown): ProcessResult {
+  const data = (payload && typeof payload === 'object' && 'data' in payload
+    ? (payload as { data: unknown }).data
+    : payload) as Record<string, unknown>;
+
+  return {
+    savedFileName: String(data.savedFileName ?? ''),
+    detectedLanguage: String(data.detectedLanguage ?? ''),
+    transcript: String(data.transcript ?? data.transcription ?? ''),
+    summaryInDetectedLanguage: String(data.summaryInDetectedLanguage ?? ''),
+    summaryInEnglish: String(data.summaryInEnglish ?? ''),
+  };
+}
+
 export default function HomePage() {
   const [status, setStatus] = useState('pronto');
   const [isRecording, setIsRecording] = useState(false);
@@ -111,8 +125,8 @@ export default function HomePage() {
         throw new Error(`falha ao processar áudio (${response.status})`);
       }
 
-      const data = (await response.json()) as ProcessResult;
-      setResult(data);
+      const payload = (await response.json()) as unknown;
+      setResult(normalizeProcessResult(payload));
       setStatus('processamento concluído');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'erro inesperado';
