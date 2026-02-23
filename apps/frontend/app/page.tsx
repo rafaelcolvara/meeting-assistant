@@ -29,6 +29,7 @@ function normalizeProcessResult(payload: unknown): ProcessResult {
 export default function HomePage() {
   const [status, setStatus] = useState('pronto');
   const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [recordedDurationMs, setRecordedDurationMs] = useState(0);
   const [result, setResult] = useState<ProcessResult | null>(null);
@@ -38,6 +39,9 @@ export default function HomePage() {
   const chunksRef = useRef<BlobPart[]>([]);
   const startedAtRef = useRef<number>(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stopResolverRef = useRef<((data: { blob: Blob; durationMs: number }) => void) | null>(
+    null,
+  );
 
   const audioPreviewUrl = useMemo(() => {
     if (!recordedBlob) {
@@ -48,6 +52,9 @@ export default function HomePage() {
 
   async function startRecording() {
     try {
+      setRecordedBlob(null);
+      setRecordedDurationMs(0);
+      setResult(null);
       streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
       chunksRef.current = [];
 
@@ -63,10 +70,12 @@ export default function HomePage() {
       mediaRecorder.addEventListener('stop', () => {
         const mimeType = mediaRecorder.mimeType || 'audio/webm';
         const blob = new Blob(chunksRef.current, { type: mimeType });
+        const durationMs = Date.now() - startedAtRef.current;
         setRecordedBlob(blob);
-        setRecordedDurationMs(Date.now() - startedAtRef.current);
+        setRecordedDurationMs(durationMs);
         setStatus('gravação finalizada');
         setIsRecording(false);
+        recorderRef.current = null;
 
         if (timerRef.current) {
           clearTimeout(timerRef.current);
@@ -74,6 +83,12 @@ export default function HomePage() {
         }
 
         streamRef.current?.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+
+        if (stopResolverRef.current) {
+          stopResolverRef.current({ blob, durationMs });
+          stopResolverRef.current = null;
+        }
       });
 
       startedAtRef.current = Date.now();
@@ -92,18 +107,24 @@ export default function HomePage() {
     }
   }
 
-  function stopRecording() {
-    if (recorderRef.current?.state === 'recording') {
-      recorderRef.current.stop();
+  function stopRecording(): Promise<{ blob: Blob; durationMs: number } | null> {
+    if (recorderRef.current?.state !== 'recording') {
+      return Promise.resolve(null);
     }
+
+    return new Promise((resolve) => {
+      stopResolverRef.current = resolve;
+      recorderRef.current?.stop();
+    });
   }
 
-  async function saveAndProcess() {
-    if (!recordedBlob) {
+  async function saveAndProcess(blob: Blob, durationMs: number) {
+    if (!blob || blob.size === 0) {
+      setStatus('erro: nenhum áudio gravado para envio');
       return;
     }
 
-    if (recordedDurationMs > MAX_RECORDING_MS) {
+    if (durationMs > MAX_RECORDING_MS) {
       setStatus('erro: áudio excede o limite máximo de 2 horas');
       return;
     }
@@ -113,8 +134,8 @@ export default function HomePage() {
     try {
       const timestamp = Date.now();
       const filename = `recording-${timestamp}.webm`;
-      const file = new File([recordedBlob], filename, {
-        type: recordedBlob.type || 'audio/webm',
+      const file = new File([blob], filename, {
+        type: blob.type || 'audio/webm',
       });
 
       const formData = new FormData();
@@ -138,20 +159,38 @@ export default function HomePage() {
     }
   }
 
+  async function handleRecButtonClick() {
+    if (isProcessing) {
+      return;
+    }
+
+    if (!isRecording) {
+      await startRecording();
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      const recordingData = await stopRecording();
+      if (!recordingData) {
+        setStatus('erro: gravação não encontrada para envio');
+        return;
+      }
+
+      await saveAndProcess(recordingData.blob, recordingData.durationMs);
+    } finally {
+      setIsProcessing(false);
+    }
+  }
+
   return (
     <main>
       <h1>Meeting Assistant</h1>
       <p>Grave, salve e processe reuniões com transcrição e resumo.</p>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <button type="button" onClick={startRecording} disabled={isRecording}>
-          Iniciar gravação
-        </button>
-        <button type="button" onClick={stopRecording} disabled={!isRecording}>
-          Parar gravação
-        </button>
-        <button type="button" onClick={saveAndProcess} disabled={!recordedBlob || isRecording}>
-          Salvar e processar
+        <button type="button" onClick={handleRecButtonClick} disabled={isProcessing}>
+          {isProcessing ? 'Processando...' : isRecording ? 'Finalizar e enviar' : 'REC'}
         </button>
       </div>
 
