@@ -340,17 +340,17 @@ export default function HomePage() {
         <h2 style={{ marginTop: 0, color: '#0f172a' }}>Resultado</h2>
 
         <h3 style={{ color: '#0f172a' }}>Transcrição</h3>
-        <pre style={{ backgroundColor: '#f8fafc', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
+        <pre style={{ backgroundColor: '#02284eff', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
           {result?.transcript ?? '-'}
         </pre>
 
         <h3 style={{ color: '#0f172a' }}>Resumo em português</h3>
-        <pre style={{ backgroundColor: '#f8fafc', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
+        <pre style={{ backgroundColor: '#02284eff', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
           {result?.summaryInDetectedLanguage ?? '-'}
         </pre>
 
         <h3 style={{ color: '#0f172a' }}>Resumo em inglês</h3>
-        <pre style={{ backgroundColor: '#f8fafc', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
+        <pre style={{ backgroundColor: '#02284eff', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
           {result?.summaryInEnglish ?? '-'}
         </pre>
       </section>
