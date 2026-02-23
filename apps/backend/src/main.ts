@@ -11,6 +11,16 @@ import { LoggingMiddleware } from './common/middleware/logging.middleware';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const bodySizeLimit = process.env.BODY_SIZE_LIMIT ?? '50mb';
+  const defaultAllowedOrigins = ['http://localhost:3001', 'http://localhost:3000'];
+  const configuredOrigins = (process.env.CORS_ORIGIN ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  const allowedOrigins = new Set(
+    (configuredOrigins.length > 0 ? configuredOrigins : defaultAllowedOrigins).map((origin) =>
+      origin.replace(/\/$/, ''),
+    ),
+  );
 
   app.use(helmet());
   app.use(cookieParser());
@@ -26,8 +36,25 @@ async function bootstrap() {
   );
 
   app.enableCors({
-    origin: process.env.CORS_ORIGIN?.split(',') ?? ['http://localhost:3001', 'http://localhost:3000'],
+    origin: (
+      origin: string | undefined,
+      callback: (err: Error | null, allow?: boolean) => void,
+    ) => {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      if (allowedOrigins.has(origin.replace(/\/$/, ''))) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error(`Origin not allowed by CORS: ${origin}`));
+    },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
   app.useGlobalPipes(
