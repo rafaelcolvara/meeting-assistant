@@ -278,13 +278,14 @@ export default function HomePage() {
         style={{
           width: 'min(900px, 100%)',
           backgroundColor: '#ffffff',
+          color: '#0f172a',
           borderRadius: 16,
           boxShadow: '0 14px 30px rgba(19, 29, 46, 0.12)',
           border: '1px solid #e6ebf2',
           padding: 24,
         }}
       >
-        <h1 style={{ margin: '0 0 8px', fontSize: 30 }}>Meeting Assistant</h1>
+        <h1 style={{ margin: '0 0 8px', fontSize: 30, color: '#0f172a' }}>Meeting Assistant</h1>
         <p style={{ margin: '0 0 16px', color: '#334155' }}>
           Grave sua reunião, finalize e envie automaticamente para transcrição e resumo.
         </p>
@@ -336,19 +337,19 @@ export default function HomePage() {
 
         {audioPreviewUrl ? <audio controls src={audioPreviewUrl} style={{ width: '100%', marginBottom: 16 }} /> : null}
 
-        <h2 style={{ marginTop: 0 }}>Resultado</h2>
+        <h2 style={{ marginTop: 0, color: '#0f172a' }}>Resultado</h2>
 
-        <h3>Transcrição</h3>
+        <h3 style={{ color: '#0f172a' }}>Transcrição</h3>
         <pre style={{ backgroundColor: '#f8fafc', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
           {result?.transcript ?? '-'}
         </pre>
 
-        <h3>Resumo em português</h3>
+        <h3 style={{ color: '#0f172a' }}>Resumo em português</h3>
         <pre style={{ backgroundColor: '#f8fafc', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
           {result?.summaryInDetectedLanguage ?? '-'}
         </pre>
 
-        <h3>Resumo em inglês</h3>
+        <h3 style={{ color: '#0f172a' }}>Resumo em inglês</h3>
         <pre style={{ backgroundColor: '#f8fafc', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
           {result?.summaryInEnglish ?? '-'}
         </pre>
