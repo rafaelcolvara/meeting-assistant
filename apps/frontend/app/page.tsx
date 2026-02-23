@@ -38,33 +38,32 @@ function formatDuration(ms: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 
-function RecIcon({
-  isRecording,
-  isProcessing,
-}: {
-  isRecording: boolean;
-  isProcessing: boolean;
-}) {
-  if (isProcessing) {
-    return (
-      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="3" opacity="0.35" />
-        <path d="M12 3a9 9 0 0 1 9 9" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-      </svg>
-    );
-  }
-
-  if (isRecording) {
-    return (
-      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" />
-      </svg>
-    );
-  }
-
+function MicIcon({ size = 34 }: { size?: number }) {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="7" fill="currentColor" />
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M12 14.4a3.6 3.6 0 0 0 3.6-3.6V6.6a3.6 3.6 0 1 0-7.2 0v4.2a3.6 3.6 0 0 0 3.6 3.6Zm-6-3.6a1 1 0 1 1 2 0 4 4 0 1 0 8 0 1 1 0 1 1 2 0 6.01 6.01 0 0 1-5 5.92V20h2a1 1 0 1 1 0 2H9a1 1 0 1 1 0-2h2v-2.28a6.01 6.01 0 0 1-5-5.92Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function StopIcon({ size = 26 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="6.5" y="6.5" width="11" height="11" rx="2.1" fill="currentColor" />
+    </svg>
+  );
+}
+
+function DocIcon({ color }: { color: string }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill={color}
+        d="M14 2H7a3 3 0 0 0-3 3v14a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3V8l-6-6Zm0 2.4L17.6 8H14V4.4ZM8 12a1 1 0 0 1 1-1h6a1 1 0 1 1 0 2H9a1 1 0 0 1-1-1Zm1 3h6a1 1 0 1 1 0 2H9a1 1 0 1 1 0-2Z"
+      />
     </svg>
   );
 }
@@ -73,10 +72,8 @@ export default function HomePage() {
   const [status, setStatus] = useState('pronto');
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [recordedDurationMs, setRecordedDurationMs] = useState(0);
   const [currentRecordingMs, setCurrentRecordingMs] = useState(0);
-  const [audioPreviewUrl, setAudioPreviewUrl] = useState('');
   const [result, setResult] = useState<ProcessResult | null>(null);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -88,18 +85,6 @@ export default function HomePage() {
   const stopResolverRef = useRef<((data: { blob: Blob; durationMs: number }) => void) | null>(
     null,
   );
-
-  useEffect(() => {
-    if (!recordedBlob) {
-      setAudioPreviewUrl('');
-      return;
-    }
-    const previewUrl = URL.createObjectURL(recordedBlob);
-    setAudioPreviewUrl(previewUrl);
-    return () => {
-      URL.revokeObjectURL(previewUrl);
-    };
-  }, [recordedBlob]);
 
   useEffect(() => {
     return () => {
@@ -115,7 +100,6 @@ export default function HomePage() {
 
   async function startRecording() {
     try {
-      setRecordedBlob(null);
       setRecordedDurationMs(0);
       setCurrentRecordingMs(0);
       setResult(null);
@@ -135,7 +119,6 @@ export default function HomePage() {
         const mimeType = mediaRecorder.mimeType || 'audio/webm';
         const blob = new Blob(chunksRef.current, { type: mimeType });
         const durationMs = Date.now() - startedAtRef.current;
-        setRecordedBlob(blob);
         setRecordedDurationMs(durationMs);
         setStatus('gravação finalizada');
         setIsRecording(false);
@@ -258,102 +241,367 @@ export default function HomePage() {
   const primaryButtonLabel = isProcessing
     ? 'Processando...'
     : isRecording
-      ? 'Finalizar e enviar'
-      : 'REC';
+      ? 'Finalizar'
+      : 'Clique para gravar';
+
+  const finishedWithContent = !isRecording && !isProcessing && Boolean(result);
+  const centerMessage = isProcessing
+    ? 'Processando...'
+    : isRecording
+      ? formatDuration(currentRecordingMs)
+      : finishedWithContent
+        ? 'Gravação concluída'
+        : 'Clique para gravar';
+  const headerStatus = isRecording ? 'REC' : isProcessing ? 'PROC' : finishedWithContent ? 'OK' : 'PRONTO';
 
   const effectiveDurationMs = isRecording ? currentRecordingMs : recordedDurationMs;
+  const pulseClass = isRecording ? 'ring-pulse' : '';
+  const topButtonColor = isProcessing ? '#e5d35d' : isRecording ? '#f71e1e' : '#2f72c7';
+  const topButtonShadow = isProcessing
+    ? '0 0 0 10px rgba(229, 211, 93, 0.32)'
+    : isRecording
+      ? '0 0 0 10px rgba(247, 30, 30, 0.22)'
+      : '0 14px 22px rgba(47, 114, 199, 0.24)';
+
+  const displayedTranscript =
+    result?.transcript || 'A transcrição da reunião aparecerá aqui após a gravação...';
+  const displayedSummaryPt =
+    result?.summaryInDetectedLanguage || 'O resumo em português será gerado automaticamente...';
+  const displayedSummaryEn = result?.summaryInEnglish || 'The English summary will be generated automatically...';
+  const cardBodyStyle = {
+    margin: 0,
+    fontSize: 18,
+    lineHeight: 1.45,
+    color: '#0f1d39',
+    whiteSpace: 'pre-wrap' as const,
+  };
 
   return (
-    <main
-      style={{
-        minHeight: '100vh',
-        background:
-          'radial-gradient(circle at 20% 20%, #ffe6e6 0%, #f7f9fc 40%, #eef3f8 100%)',
-        display: 'grid',
-        placeItems: 'center',
-        padding: 20,
-      }}
-    >
-      <section
-        style={{
-          width: 'min(900px, 100%)',
-          backgroundColor: '#ffffff',
-          color: '#0f172a',
-          borderRadius: 16,
-          boxShadow: '0 14px 30px rgba(19, 29, 46, 0.12)',
-          border: '1px solid #e6ebf2',
-          padding: 24,
-        }}
-      >
-        <h1 style={{ margin: '0 0 8px', fontSize: 30, color: '#0f172a' }}>Meeting Assistant</h1>
-        <p style={{ margin: '0 0 16px', color: '#334155' }}>
-          Grave sua reunião, finalize e envie automaticamente para transcrição e resumo.
-        </p>
-
-        <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' }}>
-          <button
-            type="button"
-            onClick={handleRecButtonClick}
-            disabled={isProcessing}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              border: 0,
-              borderRadius: 999,
-              padding: '12px 18px',
-              fontWeight: 700,
-              fontSize: 15,
-              color: '#fff',
-              backgroundColor: isRecording ? '#b91c1c' : '#0f766e',
-              cursor: isProcessing ? 'not-allowed' : 'pointer',
-              opacity: isProcessing ? 0.8 : 1,
-              transition: 'transform 120ms ease',
-            }}
-            aria-label={primaryButtonLabel}
-          >
-            <RecIcon isRecording={isRecording} isProcessing={isProcessing} />
-            <span>{primaryButtonLabel}</span>
-          </button>
-
-          <div style={{ color: '#334155', fontWeight: 600 }}>
-            Duração: <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatDuration(effectiveDurationMs)}</span>
+    <main className="meeting-app">
+      <header className="topbar">
+        <div className="brand">
+          <div className="brand-badge">
+            <DocIcon color="#2f72c7" />
           </div>
+          <strong>Meeting Assistant</strong>
         </div>
+        <div className="session-pill">{headerStatus}</div>
+      </header>
 
-        <p
-          role="status"
-          aria-live="polite"
+      <section className="hero">
+        <button
+          type="button"
+          onClick={handleRecButtonClick}
+          disabled={isProcessing}
+          aria-label={primaryButtonLabel}
+          className={`record-button ${pulseClass}`}
           style={{
-            margin: '0 0 16px',
-            backgroundColor: '#f8fafc',
-            border: '1px solid #e2e8f0',
-            borderRadius: 8,
-            padding: '10px 12px',
+            backgroundColor: topButtonColor,
+            boxShadow: topButtonShadow,
+            color: '#ffffff',
           }}
         >
-          Status: {status}
+          {isRecording ? <StopIcon /> : <MicIcon />}
+        </button>
+
+        <p className="hero-status" role="status" aria-live="polite">
+          {centerMessage}
         </p>
 
-        {audioPreviewUrl ? <audio controls src={audioPreviewUrl} style={{ width: '100%', marginBottom: 16 }} /> : null}
-
-        <h2 style={{ marginTop: 0, color: '#0f172a' }}>Resultado</h2>
-
-        <h3 style={{ color: '#0f172a' }}>Transcrição</h3>
-        <pre style={{ backgroundColor: '#02284eff', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
-          {result?.transcript ?? '-'}
-        </pre>
-
-        <h3 style={{ color: '#0f172a' }}>Resumo em português</h3>
-        <pre style={{ backgroundColor: '#02284eff', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
-          {result?.summaryInDetectedLanguage ?? '-'}
-        </pre>
-
-        <h3 style={{ color: '#0f172a' }}>Resumo em inglês</h3>
-        <pre style={{ backgroundColor: '#02284eff', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
-          {result?.summaryInEnglish ?? '-'}
-        </pre>
+        <div className="timer-row">
+          {isRecording ? (
+            <>
+              <span className="eq-bars" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+                <span />
+                <span />
+              </span>
+              <span className="timer">{formatDuration(currentRecordingMs)}</span>
+            </>
+          ) : effectiveDurationMs > 0 ? (
+            <span className="timer">Duração: {formatDuration(effectiveDurationMs)}</span>
+          ) : (
+            <span className="timer idle-label">Toque no botão para iniciar</span>
+          )}
+        </div>
       </section>
+
+      <section className="result-grid">
+        <article className="result-card">
+          <header>
+            <DocIcon color="#2f72c7" />
+            <strong>TRANSCRIÇÃO</strong>
+          </header>
+          <div className="body">
+            <p style={cardBodyStyle}>{displayedTranscript}</p>
+          </div>
+        </article>
+
+        <article className="result-card">
+          <header>
+            <DocIcon color="#00aa7a" />
+            <strong>RESUMO (PT)</strong>
+          </header>
+          <div className="body">
+            <p style={cardBodyStyle}>{displayedSummaryPt}</p>
+          </div>
+        </article>
+
+        <article className="result-card">
+          <header>
+            <DocIcon color="#e1be00" />
+            <strong>SUMMARY (EN)</strong>
+          </header>
+          <div className="body">
+            <p style={cardBodyStyle}>{displayedSummaryEn}</p>
+          </div>
+        </article>
+      </section>
+
+      <footer className="app-footer">
+        <span>{status}</span>
+      </footer>
+
+      <style jsx>{`
+        .meeting-app {
+          min-height: 100vh;
+          background: linear-gradient(180deg, #eef1f7 0%, #e5e9f1 100%);
+          color: #121c34;
+          display: flex;
+          flex-direction: column;
+          padding: 0 0 20px;
+        }
+
+        .topbar {
+          height: 74px;
+          border-bottom: 1px solid #c9d2df;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 0 min(9vw, 140px);
+          background: rgba(255, 255, 255, 0.22);
+          backdrop-filter: blur(7px);
+        }
+
+        .brand {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          font-size: 34px;
+        }
+
+        .brand-badge {
+          width: 38px;
+          height: 38px;
+          border-radius: 10px;
+          background: #d8e4f6;
+          display: grid;
+          place-items: center;
+        }
+
+        .session-pill {
+          min-width: 66px;
+          text-align: center;
+          font-size: 13px;
+          letter-spacing: 0.08em;
+          font-weight: 800;
+          color: #44516a;
+          border: 1px solid #c4cedd;
+          border-radius: 999px;
+          padding: 8px 12px;
+          background: #edf1f8;
+        }
+
+        .hero {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          margin-top: 40px;
+          gap: 12px;
+        }
+
+        .record-button {
+          width: 82px;
+          height: 82px;
+          border-radius: 999px;
+          border: 0;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          transition: transform 140ms ease, filter 180ms ease;
+        }
+
+        .record-button:hover {
+          transform: translateY(-2px);
+          filter: brightness(1.04);
+        }
+
+        .record-button:active {
+          transform: translateY(0);
+        }
+
+        .record-button:disabled {
+          cursor: progress;
+          opacity: 0.95;
+        }
+
+        .ring-pulse {
+          animation: recPulse 1.4s ease-in-out infinite;
+        }
+
+        @keyframes recPulse {
+          0%,
+          100% {
+            box-shadow: 0 0 0 8px rgba(247, 30, 30, 0.26);
+          }
+          50% {
+            box-shadow: 0 0 0 16px rgba(247, 30, 30, 0.08);
+          }
+        }
+
+        .hero-status {
+          margin: 0;
+          font-size: 32px;
+          font-weight: 600;
+          min-height: 32px;
+        }
+
+        .timer-row {
+          min-height: 28px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          font-size: 22px;
+          font-variant-numeric: tabular-nums;
+        }
+
+        .eq-bars {
+          display: inline-flex;
+          align-items: flex-end;
+          gap: 4px;
+          height: 16px;
+        }
+
+        .eq-bars span {
+          display: block;
+          width: 4px;
+          background: #f21c1c;
+          border-radius: 3px;
+          animation: barBounce 0.85s ease-in-out infinite;
+        }
+
+        .eq-bars span:nth-child(1) {
+          height: 10px;
+          animation-delay: 0s;
+        }
+        .eq-bars span:nth-child(2) {
+          height: 14px;
+          animation-delay: 0.1s;
+        }
+        .eq-bars span:nth-child(3) {
+          height: 7px;
+          animation-delay: 0.2s;
+        }
+        .eq-bars span:nth-child(4) {
+          height: 13px;
+          animation-delay: 0.3s;
+        }
+        .eq-bars span:nth-child(5) {
+          height: 9px;
+          animation-delay: 0.4s;
+        }
+
+        @keyframes barBounce {
+          0%,
+          100% {
+            transform: scaleY(0.4);
+          }
+          50% {
+            transform: scaleY(1);
+          }
+        }
+
+        .timer {
+          color: #1c2a45;
+          font-size: 22px;
+        }
+
+        .idle-label {
+          color: #56617a;
+          font-size: 16px;
+        }
+
+        .result-grid {
+          margin: 36px auto 0;
+          width: min(980px, calc(100% - 34px));
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 22px;
+        }
+
+        .result-card {
+          border: 1px solid #b5c2d5;
+          border-radius: 10px;
+          overflow: hidden;
+          background: #eef2f8;
+          min-height: 228px;
+        }
+
+        .result-card header {
+          min-height: 45px;
+          background: #b3b8c2;
+          color: #f8fafd;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 0 16px;
+          font-size: 23px;
+          letter-spacing: 0.01em;
+        }
+
+        .result-card .body {
+          padding: 16px 18px 18px;
+        }
+
+        .app-footer {
+          margin-top: auto;
+          border-top: 1px solid #c9d2df;
+          min-height: 48px;
+          display: grid;
+          place-items: center;
+          color: #12213a;
+          font-size: 14px;
+          padding: 10px 20px 0;
+          text-align: center;
+        }
+
+        @media (max-width: 980px) {
+          .topbar {
+            padding: 0 16px;
+          }
+
+          .brand {
+            font-size: 20px;
+          }
+
+          .hero-status {
+            font-size: 24px;
+          }
+
+          .timer {
+            font-size: 18px;
+          }
+
+          .result-grid {
+            grid-template-columns: 1fr;
+            max-width: 620px;
+          }
+        }
+      `}</style>
     </main>
   );
 }
