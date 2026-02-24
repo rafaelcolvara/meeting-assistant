@@ -15,6 +15,25 @@ export interface AIProvider {
   generateSummaries(transcript: string, detectedLanguage: string): Promise<SummariesResult>;
 }
 
+export function isEnglishLanguage(detectedLanguage: string): boolean {
+  const normalized = detectedLanguage.trim().toLowerCase();
+
+  if (!normalized) {
+    return false;
+  }
+
+  if (normalized === 'english') {
+    return true;
+  }
+
+  const primaryCode = normalized.split(/[-_]/)[0];
+  return primaryCode === 'en';
+}
+
+export function getTranslationTargetLanguage(detectedLanguage: string): 'Portuguese' | 'English' {
+  return isEnglishLanguage(detectedLanguage) ? 'Portuguese' : 'English';
+}
+
 export function buildSummaryPrompt(
   transcript: string,
   detectedLanguage: string,

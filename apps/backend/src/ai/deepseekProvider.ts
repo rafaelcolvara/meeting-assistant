@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { buildSummaryPrompt } from './types';
+import { buildSummaryPrompt, getTranslationTargetLanguage } from './types';
 import type { AIProvider } from './types';
 
 export class DeepSeekProvider implements AIProvider {
@@ -31,6 +31,7 @@ export class DeepSeekProvider implements AIProvider {
   async generateSummaries(transcript: string, detectedLanguage: string) {
     const client = this.getClient();
     const model = process.env.DEEPSEEK_SUMMARY_MODEL ?? 'deepseek-chat';
+    const translationTargetLanguage = getTranslationTargetLanguage(detectedLanguage);
 
     const summaryInDetectedLanguage = await this.generateSingleSummary(
       client,
@@ -41,7 +42,7 @@ export class DeepSeekProvider implements AIProvider {
     const summaryInEnglish = await this.generateSingleSummary(
       client,
       model,
-      buildSummaryPrompt(transcript, detectedLanguage, 'English'),
+      buildSummaryPrompt(transcript, detectedLanguage, translationTargetLanguage),
     );
 
     return {

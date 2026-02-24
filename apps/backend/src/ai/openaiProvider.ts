@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import OpenAI from 'openai';
-import { buildSummaryPrompt } from './types';
+import { buildSummaryPrompt, getTranslationTargetLanguage } from './types';
 import type { AIProvider } from './types';
 
 type TranscriptionResponseFormat = 'verbose_json' | 'json' | 'text';
@@ -68,6 +68,7 @@ export class OpenAIProvider implements AIProvider {
   async generateSummaries(transcript: string, detectedLanguage: string) {
     const client = this.getClient();
     const model = process.env.OPENAI_SUMMARY_MODEL ?? 'gpt-4o';
+    const translationTargetLanguage = getTranslationTargetLanguage(detectedLanguage);
 
     const summaryInDetectedLanguage = await this.generateSingleSummary(
       client,
@@ -78,7 +79,7 @@ export class OpenAIProvider implements AIProvider {
     const summaryInEnglish = await this.generateSingleSummary(
       client,
       model,
-      buildSummaryPrompt(transcript, detectedLanguage, 'English'),
+      buildSummaryPrompt(transcript, detectedLanguage, translationTargetLanguage),
     );
 
     return {

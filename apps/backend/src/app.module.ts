@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
-import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'node:path';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -17,10 +16,6 @@ import { OrganizationGuard } from './common/guards/organization.guard';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: [join(process.cwd(), 'apps/backend/.env'), join(process.cwd(), '.env'), '.env'],
-    }),
-    ServeStaticModule.forRoot({
-      rootPath: join(process.cwd(), 'public'),
-      exclude: ['/api*'],
     }),
     PrismaModule,
     AuthModule,

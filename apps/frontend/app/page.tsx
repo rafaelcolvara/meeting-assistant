@@ -55,6 +55,21 @@ function formatDuration(ms: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 
+function isEnglishLanguage(language: string): boolean {
+  const normalized = language.trim().toLowerCase();
+
+  if (!normalized) {
+    return false;
+  }
+
+  if (normalized === 'english') {
+    return true;
+  }
+
+  const primaryCode = normalized.split(/[-_]/)[0];
+  return primaryCode === 'en';
+}
+
 function MicIcon({ size = 34 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
@@ -418,9 +433,19 @@ export default function HomePage() {
 
   const displayedTranscript =
     result?.transcript || 'A transcrição da reunião aparecerá aqui após a gravação...';
-  const displayedSummaryPt =
-    result?.summaryInDetectedLanguage || 'O resumo em português será gerado automaticamente...';
-  const displayedSummaryEn = result?.summaryInEnglish || 'The English summary will be generated automatically...';
+  const summaryInDetectedLanguageLabel = isEnglishLanguage(result?.detectedLanguage ?? '')
+    ? 'SUMMARY (EN)'
+    : 'RESUMO (IDIOMA ORIGINAL)';
+  const translationSummaryLabel = isEnglishLanguage(result?.detectedLanguage ?? '')
+    ? 'RESUMO (PT)'
+    : 'SUMMARY (EN)';
+  const displayedSummaryDetected =
+    result?.summaryInDetectedLanguage || 'O resumo no idioma original será gerado automaticamente...';
+  const displayedTranslationSummary = result?.summaryInEnglish
+    ? result.summaryInEnglish
+    : isEnglishLanguage(result?.detectedLanguage ?? '')
+      ? 'O resumo em português será gerado automaticamente...'
+      : 'The English summary will be generated automatically...';
   const cardBodyStyle = {
     margin: 0,
     fontSize: 18,
@@ -495,20 +520,20 @@ export default function HomePage() {
         <article className="result-card">
           <header>
             <DocIcon color="#00aa7a" />
-            <strong>RESUMO (PT)</strong>
+            <strong>{summaryInDetectedLanguageLabel}</strong>
           </header>
           <div className="body">
-            <p style={cardBodyStyle}>{displayedSummaryPt}</p>
+            <p style={cardBodyStyle}>{displayedSummaryDetected}</p>
           </div>
         </article>
 
         <article className="result-card">
           <header>
             <DocIcon color="#e1be00" />
-            <strong>SUMMARY (EN)</strong>
+            <strong>{translationSummaryLabel}</strong>
           </header>
           <div className="body">
-            <p style={cardBodyStyle}>{displayedSummaryEn}</p>
+            <p style={cardBodyStyle}>{displayedTranslationSummary}</p>
           </div>
         </article>
       </section>

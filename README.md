@@ -154,7 +154,7 @@ pnpm dev:frontend
 
 - Core endpoint kept: `POST /api/process-audio`
 - Existing AI provider behavior preserved and moved into Nest service layer
-- Legacy static client assets kept under `apps/backend/public` for compatibility during transition
+- Backend no longer serves legacy static frontend assets; use `apps/frontend` as the UI.
 
 
 ## Docker Postgres
@@ -166,4 +166,3 @@ docker run -d \
   -e POSTGRES_DB=meeting_assistant \
   -v postgres_new_data:/var/lib/postgresql \
   postgres:latest
-
