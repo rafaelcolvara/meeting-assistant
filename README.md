@@ -112,17 +112,22 @@ pnpm install
 pnpm prisma:generate
 ```
 
-3. Build all:
+3. Apply database migrations:
+```bash
+pnpm prisma:migrate
+```
+
+4. Build all:
 ```bash
 pnpm build
 ```
 
-4. Start backend:
+5. Start backend:
 ```bash
 pnpm dev:backend
 ```
 
-5. Start frontend:
+6. Start frontend:
 ```bash
 pnpm dev:frontend
 ```

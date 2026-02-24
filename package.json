@@ -15,6 +15,8 @@
     "dev:backend": "pnpm --filter backend start:dev",
     "lint": "pnpm -r lint",
     "prisma:generate": "pnpm --filter backend prisma:generate",
-    "prisma:migrate": "pnpm --filter backend prisma:migrate"
+    "prisma:migrate": "pnpm --filter backend prisma:migrate",
+    "prisma:migrate:dev": "pnpm --filter backend prisma:migrate:dev",
+    "prisma:migrate:create": "pnpm --filter backend prisma:migrate:create"
   }
 }

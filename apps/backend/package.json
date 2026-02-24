@@ -9,7 +9,9 @@
     "start:dev": "nest start --watch",
     "lint": "echo \"No lint configured\"",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev --create-only"
+    "prisma:migrate": "prisma migrate deploy",
+    "prisma:migrate:dev": "prisma migrate dev",
+    "prisma:migrate:create": "prisma migrate dev --create-only"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.15",
