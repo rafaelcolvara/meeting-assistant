@@ -406,6 +406,7 @@ async function bootstrap() {
                 const result = await meetingService.processAudio({
                   path: completedSession.filePath,
                   originalname: completedSession.fileName,
+                  mimetype: completedSession.mimeType,
                 });
 
                 console.info('[ws][backend]', streamId, 'processing completed');

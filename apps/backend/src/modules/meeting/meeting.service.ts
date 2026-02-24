@@ -2,6 +2,7 @@ import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { existsSync, renameSync, unlinkSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { getAIProvider } from '../../ai/providerFactory';
+import { PrismaService } from '../../prisma/prisma.service';
 
 const mimeTypeToExtension: Record<string, string> = {
   'audio/webm': '.webm',
@@ -17,6 +18,8 @@ const mimeTypeToExtension: Record<string, string> = {
 
 @Injectable()
 export class MeetingService {
+  constructor(private readonly prisma: PrismaService) {}
+
   async processAudio(file: { path: string; originalname: string; mimetype?: string }) {
     const sourcePath = file.path;
 
@@ -41,7 +44,20 @@ export class MeetingService {
         transcription.detectedLanguage,
       );
 
+      const meetingContext = await this.prisma.meetingContext.create({
+        data: {
+          originalFileName: file.originalname,
+          savedFileName,
+          mimeType,
+          detectedLanguage: transcription.detectedLanguage,
+          transcript: transcription.transcript,
+          summaryInDetectedLanguage: summaries.summaryInDetectedLanguage,
+          summaryInEnglish: summaries.summaryInEnglish,
+        },
+      });
+
       return {
+        id: meetingContext.id,
         savedFileName,
         detectedLanguage: transcription.detectedLanguage,
         transcript: transcription.transcript,

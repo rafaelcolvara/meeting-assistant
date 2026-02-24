@@ -85,3 +85,19 @@ model Session {
   @@index([organizationId])
   @@map("sessions")
 }
+
+model MeetingContext {
+  id                        String   @id @default(cuid())
+  originalFileName          String
+  savedFileName             String
+  mimeType                  String?
+  detectedLanguage          String
+  transcript                String
+  summaryInDetectedLanguage String
+  summaryInEnglish          String
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  @@index([createdAt])
+  @@map("meeting_contexts")
+}
