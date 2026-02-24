@@ -26,6 +26,23 @@ function normalizeProcessResult(payload: unknown): ProcessResult {
   };
 }
 
+function parseWsEventData(rawData: unknown): Record<string, unknown> {
+  if (typeof rawData === 'string') {
+    try {
+      const parsed = JSON.parse(rawData);
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      throw new Error('mensagem WebSocket inválida (JSON malformado)');
+    }
+  }
+
+  if (rawData && typeof rawData === 'object') {
+    return rawData as Record<string, unknown>;
+  }
+
+  throw new Error('mensagem WebSocket inválida (tipo inesperado)');
+}
+
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
   const hours = Math.floor(totalSeconds / 3600);
@@ -134,7 +151,18 @@ export default function HomePage() {
     });
 
     ws.addEventListener('message', (event) => {
-      const payload = JSON.parse(String(event.data)) as Record<string, unknown>;
+      let payload: Record<string, unknown>;
+
+      try {
+        payload = parseWsEventData(event.data);
+      } catch (error) {
+        wsResultRejectorRef.current?.(
+          error instanceof Error ? error : new Error('falha ao interpretar resposta do WebSocket'),
+        );
+        cleanupSocket();
+        return;
+      }
+
       const type = String(payload.type ?? '');
 
       if (type === 'result') {
