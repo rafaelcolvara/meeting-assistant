@@ -4,6 +4,7 @@ services:
     env: node
     rootDir: .
     buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm --filter backend prisma:generate && pnpm --filter backend build
+    preDeployCommand: pnpm --filter backend prisma:migrate
     startCommand: pnpm --filter backend start
     envVars:
       - key: NPM_CONFIG_PRODUCTION
