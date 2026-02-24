@@ -134,6 +134,17 @@ pnpm dev:frontend
 - frontend web service
 - managed PostgreSQL database
 
+
+## Audio Streaming Flow (WebSocket)
+
+- Frontend (`apps/frontend/app/page.tsx`) now records with `MediaRecorder.start(1000)` and sends chunks continuously through `ws://.../ws/audio-stream`.
+- WebSocket protocol:
+  - `start`: inicia sessão e cria arquivo temporário no backend.
+  - `chunk`: envia `chunkBase64` incremental do áudio gravado.
+  - `finish`: fecha stream, dispara transcrição e retorna o resultado final.
+- Backend (`apps/backend/src/main.ts`) implementa handshake WebSocket nativo (sem novas dependências), escreve chunks em arquivo temporário em `uploads/` e reutiliza `MeetingService.processAudio` para manter a lógica de transcrição/resumo já existente.
+- Endpoint legado `POST /api/process-audio` permanece disponível para compatibilidade.
+
 ## MVP Compatibility
 
 - Core endpoint kept: `POST /api/process-audio`

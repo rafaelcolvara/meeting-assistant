@@ -78,13 +78,104 @@ export default function HomePage() {
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<BlobPart[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
+  const wsReadyResolverRef = useRef<((value: void | PromiseLike<void>) => void) | null>(null);
+  const wsReadyPromiseRef = useRef<Promise<void> | null>(null);
+  const wsResultResolverRef = useRef<((value: ProcessResult) => void) | null>(null);
+  const wsResultRejectorRef = useRef<((reason?: unknown) => void) | null>(null);
+  const wsResultPromiseRef = useRef<Promise<ProcessResult | null> | null>(null);
   const startedAtRef = useRef<number>(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopResolverRef = useRef<((data: { blob: Blob; durationMs: number }) => void) | null>(
-    null,
-  );
+  const stopResolverRef = useRef<((data: { durationMs: number }) => void) | null>(null);
+
+  function buildAudioStreamWsUrl() {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+    if (!apiUrl) {
+      throw new Error('NEXT_PUBLIC_API_URL não definido.');
+    }
+
+    const normalized = apiUrl.replace(/\/$/, '');
+    if (normalized.startsWith('https://')) {
+      return `${normalized.replace('https://', 'wss://')}/ws/audio-stream`;
+    }
+
+    return `${normalized.replace('http://', 'ws://')}/ws/audio-stream`;
+  }
+
+  function cleanupSocket() {
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
+    wsReadyPromiseRef.current = null;
+    wsReadyResolverRef.current = null;
+    wsResultResolverRef.current = null;
+    wsResultRejectorRef.current = null;
+  }
+
+  function connectAudioSocket(mimeType: string) {
+    const ws = new WebSocket(buildAudioStreamWsUrl());
+    wsRef.current = ws;
+
+    wsReadyPromiseRef.current = new Promise((resolve) => {
+      wsReadyResolverRef.current = resolve;
+    });
+
+    const resultPromise = new Promise<ProcessResult>((resolve, reject) => {
+      wsResultResolverRef.current = resolve;
+      wsResultRejectorRef.current = reject;
+    });
+
+    ws.addEventListener('open', () => {
+      ws.send(JSON.stringify({ type: 'start', mimeType }));
+      wsReadyResolverRef.current?.();
+    });
+
+    ws.addEventListener('message', (event) => {
+      const payload = JSON.parse(String(event.data)) as Record<string, unknown>;
+      const type = String(payload.type ?? '');
+
+      if (type === 'result') {
+        wsResultResolverRef.current?.(normalizeProcessResult(payload));
+        cleanupSocket();
+        return;
+      }
+
+      if (type === 'error') {
+        wsResultRejectorRef.current?.(new Error(String(payload.error ?? 'falha ao processar áudio')));
+        cleanupSocket();
+      }
+    });
+
+    ws.addEventListener('close', () => {
+      if (wsResultRejectorRef.current) {
+        wsResultRejectorRef.current(new Error('conexão WebSocket encerrada antes da conclusão'));
+      }
+      cleanupSocket();
+    });
+
+    ws.addEventListener('error', () => {
+      if (wsResultRejectorRef.current) {
+        wsResultRejectorRef.current(new Error('erro na conexão WebSocket'));
+      }
+      cleanupSocket();
+    });
+
+    return resultPromise;
+  }
+
+  function arrayBufferToBase64(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+
+    for (let index = 0; index < bytes.length; index += 1) {
+      binary += String.fromCharCode(bytes[index]);
+    }
+
+    return btoa(binary);
+  }
 
   useEffect(() => {
     return () => {
@@ -94,6 +185,7 @@ export default function HomePage() {
       if (tickerRef.current) {
         clearInterval(tickerRef.current);
       }
+      cleanupSocket();
       streamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, []);
@@ -104,23 +196,29 @@ export default function HomePage() {
       setCurrentRecordingMs(0);
       setResult(null);
       streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
-      chunksRef.current = [];
 
       const mediaRecorder = new MediaRecorder(streamRef.current);
       recorderRef.current = mediaRecorder;
+      const wsResultPromise = connectAudioSocket(mediaRecorder.mimeType || 'audio/webm');
 
       mediaRecorder.addEventListener('dataavailable', (event) => {
         if (event.data.size > 0) {
-          chunksRef.current.push(event.data);
+          void (async () => {
+            await wsReadyPromiseRef.current;
+            const chunkBuffer = await event.data.arrayBuffer();
+            const chunkBase64 = arrayBufferToBase64(chunkBuffer);
+
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+              wsRef.current.send(JSON.stringify({ type: 'chunk', chunkBase64 }));
+            }
+          })();
         }
       });
 
       mediaRecorder.addEventListener('stop', () => {
-        const mimeType = mediaRecorder.mimeType || 'audio/webm';
-        const blob = new Blob(chunksRef.current, { type: mimeType });
         const durationMs = Date.now() - startedAtRef.current;
         setRecordedDurationMs(durationMs);
-        setStatus('gravação finalizada');
+        setStatus('gravação finalizada; aguardando processamento...');
         setIsRecording(false);
         recorderRef.current = null;
         setCurrentRecordingMs(0);
@@ -137,8 +235,12 @@ export default function HomePage() {
         streamRef.current?.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
 
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: 'finish', durationMs }));
+        }
+
         if (stopResolverRef.current) {
-          stopResolverRef.current({ blob, durationMs });
+          stopResolverRef.current({ durationMs });
           stopResolverRef.current = null;
         }
       });
@@ -154,15 +256,18 @@ export default function HomePage() {
         }
       }, MAX_RECORDING_MS);
 
-      mediaRecorder.start();
+      mediaRecorder.start(1000);
       setIsRecording(true);
       setStatus('gravando...');
+
+      return wsResultPromise;
     } catch {
       setStatus('erro ao acessar microfone');
+      return null;
     }
   }
 
-  function stopRecording(): Promise<{ blob: Blob; durationMs: number } | null> {
+  function stopRecording(): Promise<{ durationMs: number } | null> {
     if (recorderRef.current?.state !== 'recording') {
       return Promise.resolve(null);
     }
@@ -173,40 +278,20 @@ export default function HomePage() {
     });
   }
 
-  async function saveAndProcess(blob: Blob, durationMs: number) {
-    if (!blob || blob.size === 0) {
-      setStatus('erro: nenhum áudio gravado para envio');
-      return;
-    }
-
+  async function finishAndProcess(durationMs: number, wsResultPromise: Promise<ProcessResult | null>) {
     if (durationMs > MAX_RECORDING_MS) {
       setStatus('erro: áudio excede o limite máximo de 2 horas');
       return;
     }
 
-    setStatus('salvando e processando...');
+    setStatus('processando stream de áudio...');
 
     try {
-      const timestamp = Date.now();
-      const filename = `recording-${timestamp}.webm`;
-      const file = new File([blob], filename, {
-        type: blob.type || 'audio/webm',
-      });
-
-      const formData = new FormData();
-      formData.append('audio', file);
-
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/process-audio`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(`falha ao processar áudio (${response.status})`);
+      const payload = await wsResultPromise;
+      if (!payload) {
+        throw new Error('falha ao inicializar o stream de áudio');
       }
-
-      const payload = (await response.json()) as unknown;
-      setResult(normalizeProcessResult(payload));
+      setResult(payload);
       setStatus('processamento concluído');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'erro inesperado';
@@ -220,7 +305,10 @@ export default function HomePage() {
     }
 
     if (!isRecording) {
-      await startRecording();
+      const wsResultPromise = startRecording();
+      if (wsResultPromise) {
+        wsResultPromiseRef.current = wsResultPromise;
+      }
       return;
     }
 
@@ -232,7 +320,13 @@ export default function HomePage() {
         return;
       }
 
-      await saveAndProcess(recordingData.blob, recordingData.durationMs);
+      if (!wsResultPromiseRef.current) {
+        setStatus('erro: conexão de stream não inicializada');
+        return;
+      }
+
+      await finishAndProcess(recordingData.durationMs, wsResultPromiseRef.current);
+      wsResultPromiseRef.current = null;
     } finally {
       setIsProcessing(false);
     }
