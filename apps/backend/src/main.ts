@@ -310,6 +310,15 @@ async function bootstrap() {
             continue;
           }
 
+          if (type === 'chunk' && !session) {
+            continue;
+          }
+
+          if (type === 'finish' && !session) {
+            sendWsMessage(socket, { type: 'ack', message: 'stream already finished' });
+            continue;
+          }
+
           if (!session) {
             throw new Error('No active audio stream session.');
           }
