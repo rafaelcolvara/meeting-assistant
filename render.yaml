@@ -3,9 +3,9 @@ services:
     name: meeting-assistant-backend
     env: node
     rootDir: .
-    buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm --filter backend prisma:generate && pnpm --filter backend build
-    preDeployCommand: pnpm --filter backend prisma:migrate
-    startCommand: pnpm --filter backend prisma:migrate && pnpm --filter backend start
+    buildCommand: corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm --filter backend exec prisma generate && pnpm --filter backend build
+    preDeployCommand: pnpm --filter backend exec prisma migrate deploy
+    startCommand: pnpm --filter backend start
     envVars:
       - key: NPM_CONFIG_PRODUCTION
         value: 'false'
