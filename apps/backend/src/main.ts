@@ -29,6 +29,7 @@ if (!existsSync(uploadsDir)) {
 }
 
 type WsFrame = {
+  fin: boolean;
   opcode: number;
   payload: Buffer;
 };
@@ -46,6 +47,7 @@ function parseWebSocketFrames(buffer: Buffer): { frames: WsFrame[]; remaining: B
   while (offset + 2 <= buffer.length) {
     const firstByte = buffer[offset];
     const secondByte = buffer[offset + 1];
+    const fin = (firstByte & 0x80) === 0x80;
     const opcode = firstByte & 0x0f;
     const masked = (secondByte & 0x80) === 0x80;
     let payloadLength = secondByte & 0x7f;
@@ -85,7 +87,7 @@ function parseWebSocketFrames(buffer: Buffer): { frames: WsFrame[]; remaining: B
       }
     }
 
-    frames.push({ opcode, payload });
+    frames.push({ fin, opcode, payload });
     offset += frameLength;
   }
 
@@ -119,7 +121,16 @@ function encodeTextFrame(text: string): Buffer {
 }
 
 function sendWsMessage(socket: Socket, payload: unknown) {
-  socket.write(encodeTextFrame(JSON.stringify(payload)));
+  const safePayload = JSON.stringify(payload);
+
+  if (!safePayload) {
+    socket.write(
+      encodeTextFrame(JSON.stringify({ type: 'error', error: 'Failed to serialize websocket payload.' })),
+    );
+    return;
+  }
+
+  socket.write(encodeTextFrame(safePayload));
 }
 
 async function bootstrap() {
@@ -213,6 +224,7 @@ async function bootstrap() {
 
     let session: AudioSession | null = null;
     let dataBuffer = Buffer.alloc(0);
+    let fragmentedMessage: Buffer | null = null;
 
     const cleanupSession = () => {
       if (!session) {
@@ -240,6 +252,31 @@ async function bootstrap() {
           cleanupSession();
           socket.end();
           return;
+        }
+
+        if (frame.opcode === 0x9) {
+          socket.write(Buffer.from([0x8a, 0x00]));
+          continue;
+        }
+
+        if (frame.opcode === 0x0) {
+          if (!fragmentedMessage) {
+            sendWsMessage(socket, { type: 'error', error: 'Invalid fragmented websocket message.' });
+            continue;
+          }
+
+          fragmentedMessage = Buffer.concat([fragmentedMessage, frame.payload]);
+
+          if (!frame.fin) {
+            continue;
+          }
+
+          frame.payload = fragmentedMessage;
+          fragmentedMessage = null;
+          frame.opcode = 0x1;
+        } else if (frame.opcode === 0x1 && !frame.fin) {
+          fragmentedMessage = Buffer.from(frame.payload);
+          continue;
         }
 
         if (frame.opcode !== 0x1) {
