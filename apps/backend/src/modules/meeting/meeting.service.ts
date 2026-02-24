@@ -31,8 +31,9 @@ export class MeetingService {
         summaryInDetectedLanguage: summaries.summaryInDetectedLanguage,
         summaryInEnglish: summaries.summaryInEnglish,
       };
-    } catch {
-      throw new InternalServerErrorException('Failed to transcribe audio.');
+    } catch (error) {
+      const details = error instanceof Error ? error.message : 'Unknown transcription error.';
+      throw new InternalServerErrorException(`Failed to transcribe audio. ${details}`);
     } finally {
       if (existsSync(filePath)) {
         unlinkSync(filePath);
