@@ -164,4 +164,6 @@ docker run -d \
   -e POSTGRES_USER=meeting_assistant \
   -e POSTGRES_PASSWORD=meeting_assistant \
   -e POSTGRES_DB=meeting_assistant \
+  -v postgres_new_data:/var/lib/postgresql \
   postgres:latest
+
