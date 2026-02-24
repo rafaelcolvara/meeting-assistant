@@ -41,7 +41,9 @@ export class MeetingController {
       },
     }),
   )
-  async processAudio(@UploadedFile() file?: { path: string; originalname: string }) {
+  async processAudio(
+    @UploadedFile() file?: { path: string; originalname: string; mimetype?: string },
+  ) {
     if (!file) {
       throw new BadRequestException('No audio file was provided.');
     }

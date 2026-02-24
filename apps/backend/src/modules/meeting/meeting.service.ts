@@ -3,16 +3,33 @@ import { existsSync, renameSync, unlinkSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { getAIProvider } from '../../ai/providerFactory';
 
+const mimeTypeToExtension: Record<string, string> = {
+  'audio/webm': '.webm',
+  'audio/ogg': '.ogg',
+  'audio/mpeg': '.mp3',
+  'audio/mp4': '.mp4',
+  'audio/wav': '.wav',
+  'audio/x-wav': '.wav',
+  'audio/flac': '.flac',
+  'audio/x-m4a': '.m4a',
+  'audio/aac': '.aac',
+};
+
 @Injectable()
 export class MeetingService {
-  async processAudio(file: { path: string; originalname: string }) {
+  async processAudio(file: { path: string; originalname: string; mimetype?: string }) {
     const sourcePath = file.path;
 
     if (!sourcePath || !existsSync(sourcePath)) {
       throw new InternalServerErrorException('Uploaded file could not be found.');
     }
 
-    const savedFileName = `audio-${Date.now()}${extname(file.originalname) || '.webm'}`;
+    const originalExtension = extname(file.originalname).toLowerCase();
+    const mimeType = file.mimetype?.split(';')[0]?.trim().toLowerCase();
+    const extensionFromMimeType = mimeType ? mimeTypeToExtension[mimeType] : undefined;
+    const finalExtension = originalExtension || extensionFromMimeType || '.webm';
+
+    const savedFileName = `audio-${Date.now()}${finalExtension}`;
     const filePath = join(process.cwd(), 'uploads', savedFileName);
     renameSync(sourcePath, filePath);
 
