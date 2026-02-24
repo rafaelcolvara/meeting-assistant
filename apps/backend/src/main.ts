@@ -20,6 +20,9 @@ type AudioSession = {
   mimeType: string;
   durationMs: number;
   writeStream: ReturnType<typeof createWriteStream>;
+  chunkCount: number;
+  chunkBytes: number;
+  startedAt: number;
 };
 
 const uploadsDir = join(process.cwd(), 'uploads');
@@ -133,6 +136,16 @@ function sendWsMessage(socket: Socket, payload: unknown) {
   socket.write(encodeTextFrame(safePayload));
 }
 
+function parseCloseFramePayload(payload: Buffer) {
+  if (payload.length < 2) {
+    return { code: undefined, reason: '' };
+  }
+
+  const code = payload.readUInt16BE(0);
+  const reason = payload.subarray(2).toString('utf8');
+  return { code, reason };
+}
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const bodySizeLimit = process.env.BODY_SIZE_LIMIT ?? '50mb';
@@ -200,13 +213,22 @@ async function bootstrap() {
   const httpServer = app.getHttpServer();
 
   httpServer.on('upgrade', (request: IncomingMessage, socket: Socket) => {
+    const streamId = randomUUID();
+    console.info('[ws][backend]', streamId, 'upgrade request', {
+      url: request.url,
+      remoteAddress: socket.remoteAddress,
+      remotePort: socket.remotePort,
+    });
+
     if (request.url !== '/ws/audio-stream') {
+      console.warn('[ws][backend]', streamId, 'upgrade rejected: unexpected url', { url: request.url });
       socket.destroy();
       return;
     }
 
     const key = request.headers['sec-websocket-key'];
     if (!key || typeof key !== 'string') {
+      console.warn('[ws][backend]', streamId, 'upgrade rejected: missing websocket key');
       socket.destroy();
       return;
     }
@@ -221,6 +243,7 @@ async function bootstrap() {
         '\r\n',
       ].join('\r\n'),
     );
+    console.info('[ws][backend]', streamId, 'upgrade accepted');
 
     let session: AudioSession | null = null;
     let dataBuffer = Buffer.alloc(0);
@@ -230,6 +253,13 @@ async function bootstrap() {
       if (!session) {
         return;
       }
+
+      console.info('[ws][backend]', streamId, 'cleaning session', {
+        fileName: session.fileName,
+        chunkCount: session.chunkCount,
+        chunkBytes: session.chunkBytes,
+        durationMs: session.durationMs,
+      });
 
       if (!session.writeStream.closed) {
         session.writeStream.end();
@@ -249,6 +279,11 @@ async function bootstrap() {
 
       for (const frame of frames) {
         if (frame.opcode === 0x8) {
+          const closePayload = parseCloseFramePayload(frame.payload);
+          console.warn('[ws][backend]', streamId, 'received close frame', {
+            code: closePayload.code,
+            reason: closePayload.reason || '(empty)',
+          });
           cleanupSession();
           socket.end();
           return;
@@ -304,8 +339,12 @@ async function bootstrap() {
               mimeType,
               durationMs: 0,
               writeStream,
+              chunkCount: 0,
+              chunkBytes: 0,
+              startedAt: Date.now(),
             };
 
+            console.info('[ws][backend]', streamId, 'stream started', { fileName, mimeType });
             sendWsMessage(socket, { type: 'ack', message: 'stream started' });
             continue;
           }
@@ -330,7 +369,16 @@ async function bootstrap() {
               continue;
             }
 
-            session.writeStream.write(Buffer.from(chunkBase64, 'base64'));
+            const chunkBuffer = Buffer.from(chunkBase64, 'base64');
+            session.chunkCount += 1;
+            session.chunkBytes += chunkBuffer.byteLength;
+            if (session.chunkCount % 20 === 0) {
+              console.info('[ws][backend]', streamId, 'chunk stats', {
+                chunkCount: session.chunkCount,
+                chunkBytes: session.chunkBytes,
+              });
+            }
+            session.writeStream.write(chunkBuffer);
             continue;
           }
 
@@ -339,21 +387,33 @@ async function bootstrap() {
             const completedSession = session;
             session = null;
 
+            console.info('[ws][backend]', streamId, 'finish received', {
+              durationMs: completedSession.durationMs,
+              elapsedMs: Date.now() - completedSession.startedAt,
+              chunkCount: completedSession.chunkCount,
+              chunkBytes: completedSession.chunkBytes,
+            });
+
             completedSession.writeStream.end(async () => {
               try {
                 if (completedSession.durationMs > 2 * 60 * 60 * 1000) {
                   throw new Error('Audio exceeds the maximum duration of 2 hours.');
                 }
 
+                console.info('[ws][backend]', streamId, 'processing started', {
+                  filePath: completedSession.filePath,
+                });
                 const result = await meetingService.processAudio({
                   path: completedSession.filePath,
                   originalname: completedSession.fileName,
                 });
 
+                console.info('[ws][backend]', streamId, 'processing completed');
                 sendWsMessage(socket, { type: 'result', data: result });
               } catch (error) {
                 const message =
                   error instanceof Error ? error.message : 'Failed to process audio stream.';
+                console.error('[ws][backend]', streamId, 'processing failed', { message });
                 sendWsMessage(socket, { type: 'error', error: message });
 
                 if (existsSync(completedSession.filePath)) {
@@ -367,17 +427,20 @@ async function bootstrap() {
           throw new Error(`Unsupported stream message type: ${type}`);
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Invalid websocket message.';
+          console.error('[ws][backend]', streamId, 'invalid websocket message', { message });
           sendWsMessage(socket, { type: 'error', error: message });
         }
       }
     });
 
-    socket.on('error', () => {
+    socket.on('error', (error) => {
+      console.error('[ws][backend]', streamId, 'socket error', { message: error.message });
       cleanupSession();
       socket.destroy();
     });
 
-    socket.on('close', () => {
+    socket.on('close', (hadError) => {
+      console.warn('[ws][backend]', streamId, 'socket closed', { hadError });
       cleanupSession();
     });
   });

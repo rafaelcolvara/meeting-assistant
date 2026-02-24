@@ -105,6 +105,7 @@ export default function HomePage() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopResolverRef = useRef<((data: { durationMs: number }) => void) | null>(null);
+  const wsStreamIdRef = useRef<string | null>(null);
 
   function buildAudioStreamWsUrl() {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL;
@@ -122,6 +123,7 @@ export default function HomePage() {
 
   function cleanupSocket() {
     if (wsRef.current) {
+      console.info('[ws][frontend]', wsStreamIdRef.current ?? 'unknown', 'closing socket from cleanup');
       wsRef.current.close();
       wsRef.current = null;
     }
@@ -130,11 +132,15 @@ export default function HomePage() {
     wsReadyResolverRef.current = null;
     wsResultResolverRef.current = null;
     wsResultRejectorRef.current = null;
+    wsStreamIdRef.current = null;
   }
 
   function connectAudioSocket(mimeType: string) {
+    const streamId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const ws = new WebSocket(buildAudioStreamWsUrl());
     wsRef.current = ws;
+    wsStreamIdRef.current = streamId;
+    console.info('[ws][frontend]', streamId, 'connecting', { url: ws.url, mimeType });
 
     wsReadyPromiseRef.current = new Promise((resolve) => {
       wsReadyResolverRef.current = resolve;
@@ -146,6 +152,7 @@ export default function HomePage() {
     });
 
     ws.addEventListener('open', () => {
+      console.info('[ws][frontend]', streamId, 'open -> sending start');
       ws.send(JSON.stringify({ type: 'start', mimeType }));
       wsReadyResolverRef.current?.();
     });
@@ -164,20 +171,31 @@ export default function HomePage() {
       }
 
       const type = String(payload.type ?? '');
+      if (type === 'ack') {
+        console.info('[ws][frontend]', streamId, 'ack', payload);
+      }
 
       if (type === 'result') {
+        console.info('[ws][frontend]', streamId, 'result received');
         wsResultResolverRef.current?.(normalizeProcessResult(payload));
         cleanupSocket();
         return;
       }
 
       if (type === 'error') {
+        console.error('[ws][frontend]', streamId, 'backend error', payload);
         wsResultRejectorRef.current?.(new Error(String(payload.error ?? 'falha ao processar áudio')));
         cleanupSocket();
       }
     });
 
-    ws.addEventListener('close', () => {
+    ws.addEventListener('close', (event) => {
+      console.warn('[ws][frontend]', streamId, 'close event', {
+        code: event.code,
+        reason: event.reason || '(empty)',
+        wasClean: event.wasClean,
+        readyState: ws.readyState,
+      });
       if (wsResultRejectorRef.current) {
         wsResultRejectorRef.current(new Error('conexão WebSocket encerrada antes da conclusão'));
       }
@@ -185,6 +203,7 @@ export default function HomePage() {
     });
 
     ws.addEventListener('error', () => {
+      console.error('[ws][frontend]', streamId, 'socket error event', { readyState: ws.readyState });
       if (wsResultRejectorRef.current) {
         wsResultRejectorRef.current(new Error('erro na conexão WebSocket'));
       }
@@ -237,7 +256,14 @@ export default function HomePage() {
             const chunkBase64 = arrayBufferToBase64(chunkBuffer);
 
             if (wsRef.current?.readyState === WebSocket.OPEN) {
+              console.debug('[ws][frontend]', wsStreamIdRef.current, 'sending chunk', {
+                bytes: chunkBuffer.byteLength,
+              });
               wsRef.current.send(JSON.stringify({ type: 'chunk', chunkBase64 }));
+            } else {
+              console.warn('[ws][frontend]', wsStreamIdRef.current, 'dropping chunk: socket not open', {
+                readyState: wsRef.current?.readyState,
+              });
             }
           })();
         }
@@ -264,7 +290,12 @@ export default function HomePage() {
         streamRef.current = null;
 
         if (wsRef.current?.readyState === WebSocket.OPEN) {
+          console.info('[ws][frontend]', wsStreamIdRef.current, 'sending finish', { durationMs });
           wsRef.current.send(JSON.stringify({ type: 'finish', durationMs }));
+        } else {
+          console.warn('[ws][frontend]', wsStreamIdRef.current, 'finish not sent: socket not open', {
+            readyState: wsRef.current?.readyState,
+          });
         }
 
         if (stopResolverRef.current) {
