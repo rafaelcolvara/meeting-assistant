@@ -158,6 +158,7 @@ pnpm dev:frontend
 
 
 ## Docker Postgres
+### create container
 docker run -d \
   --name postgres \
   -p 5432:5432 \
@@ -166,3 +167,9 @@ docker run -d \
   -e POSTGRES_DB=meeting_assistant \
   -v postgres_new_data:/var/lib/postgresql \
   postgres:latest
+
+### start container
+docker start postgres
+
+### stop container
+docker stop postgres
