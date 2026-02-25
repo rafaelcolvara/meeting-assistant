@@ -121,6 +121,7 @@ export default function HomePage() {
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopResolverRef = useRef<((data: { durationMs: number }) => void) | null>(null);
   const wsStreamIdRef = useRef<string | null>(null);
+  const pendingChunkSendsRef = useRef<Set<Promise<void>>>(new Set());
 
   function buildAudioStreamWsUrl() {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL;
@@ -148,6 +149,15 @@ export default function HomePage() {
     wsResultResolverRef.current = null;
     wsResultRejectorRef.current = null;
     wsStreamIdRef.current = null;
+  }
+
+  function waitForPendingChunkSends() {
+    const pending = Array.from(pendingChunkSendsRef.current);
+    if (pending.length === 0) {
+      return Promise.resolve();
+    }
+
+    return Promise.allSettled(pending).then(() => undefined);
   }
 
   function connectAudioSocket(mimeType: string) {
@@ -265,7 +275,7 @@ export default function HomePage() {
 
       mediaRecorder.addEventListener('dataavailable', (event) => {
         if (event.data.size > 0) {
-          void (async () => {
+          const sendChunkPromise = (async () => {
             await wsReadyPromiseRef.current;
             const chunkBuffer = await event.data.arrayBuffer();
             const chunkBase64 = arrayBufferToBase64(chunkBuffer);
@@ -281,42 +291,51 @@ export default function HomePage() {
               });
             }
           })();
+
+          pendingChunkSendsRef.current.add(sendChunkPromise);
+          void sendChunkPromise.finally(() => {
+            pendingChunkSendsRef.current.delete(sendChunkPromise);
+          });
         }
       });
 
       mediaRecorder.addEventListener('stop', () => {
-        const durationMs = Date.now() - startedAtRef.current;
-        setRecordedDurationMs(durationMs);
-        setStatus('gravação finalizada; aguardando processamento...');
-        setIsRecording(false);
-        recorderRef.current = null;
-        setCurrentRecordingMs(0);
+        void (async () => {
+          const durationMs = Date.now() - startedAtRef.current;
+          setRecordedDurationMs(durationMs);
+          setStatus('gravação finalizada; aguardando processamento...');
+          setIsRecording(false);
+          recorderRef.current = null;
+          setCurrentRecordingMs(0);
 
-        if (timerRef.current) {
-          clearTimeout(timerRef.current);
-          timerRef.current = null;
-        }
-        if (tickerRef.current) {
-          clearInterval(tickerRef.current);
-          tickerRef.current = null;
-        }
+          if (timerRef.current) {
+            clearTimeout(timerRef.current);
+            timerRef.current = null;
+          }
+          if (tickerRef.current) {
+            clearInterval(tickerRef.current);
+            tickerRef.current = null;
+          }
 
-        streamRef.current?.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
+          streamRef.current?.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
 
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          console.info('[ws][frontend]', wsStreamIdRef.current, 'sending finish', { durationMs });
-          wsRef.current.send(JSON.stringify({ type: 'finish', durationMs }));
-        } else {
-          console.warn('[ws][frontend]', wsStreamIdRef.current, 'finish not sent: socket not open', {
-            readyState: wsRef.current?.readyState,
-          });
-        }
+          await waitForPendingChunkSends();
 
-        if (stopResolverRef.current) {
-          stopResolverRef.current({ durationMs });
-          stopResolverRef.current = null;
-        }
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            console.info('[ws][frontend]', wsStreamIdRef.current, 'sending finish', { durationMs });
+            wsRef.current.send(JSON.stringify({ type: 'finish', durationMs }));
+          } else {
+            console.warn('[ws][frontend]', wsStreamIdRef.current, 'finish not sent: socket not open', {
+              readyState: wsRef.current?.readyState,
+            });
+          }
+
+          if (stopResolverRef.current) {
+            stopResolverRef.current({ durationMs });
+            stopResolverRef.current = null;
+          }
+        })();
       });
 
       startedAtRef.current = Date.now();
