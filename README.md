@@ -148,6 +148,7 @@ pnpm dev:frontend
   - `chunk`: envia `chunkBase64` incremental do áudio gravado.
   - `finish`: fecha stream, dispara transcrição e retorna o resultado final.
 - Backend (`apps/backend/src/main.ts`) implementa handshake WebSocket nativo (sem novas dependências), escreve chunks em arquivo temporário em `uploads/` e reutiliza `MeetingService.processAudio` para manter a lógica de transcrição/resumo já existente.
+- Para áudios longos acima do limite do modelo de transcrição, o backend faz split automático com `ffmpeg` e concatena as transcrições. Opcional: configure `OPENAI_TRANSCRIPTION_CHUNK_SECONDS` (default recomendado: `1200`).
 - Endpoint legado `POST /api/process-audio` permanece disponível para compatibilidade.
 
 ## MVP Compatibility

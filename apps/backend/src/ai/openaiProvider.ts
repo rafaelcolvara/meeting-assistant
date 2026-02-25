@@ -1,9 +1,14 @@
 import fs from 'node:fs';
+import { execFile } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { extname, join } from 'node:path';
+import { promisify } from 'node:util';
 import OpenAI from 'openai';
 import { buildSummaryPrompt, getTranslationTargetLanguage } from './types';
 import type { AIProvider } from './types';
 
 type TranscriptionResponseFormat = 'verbose_json' | 'json' | 'text';
+const execFileAsync = promisify(execFile);
 
 export class OpenAIProvider implements AIProvider {
   private client: OpenAI | undefined;
@@ -27,42 +32,57 @@ export class OpenAIProvider implements AIProvider {
     const model = process.env.OPENAI_TRANSCRIPTION_MODEL ?? 'gpt-4o-transcribe';
     const formats: TranscriptionResponseFormat[] = ['verbose_json', 'json', 'text'];
 
-    let lastError: unknown;
+    try {
+      const transcription = await this.transcribeWithFormats(client, filePath, model, formats);
+      return this.buildTranscriptionResult(client, transcription);
+    } catch (error) {
+      const maxDurationSeconds = this.extractMaxDurationSeconds(error);
 
-    for (const responseFormat of formats) {
+      if (!maxDurationSeconds) {
+        throw this.toError(error);
+      }
+
+      const { chunkDir, chunkFiles } = await this.splitAudioForTranscription(filePath, maxDurationSeconds);
+
       try {
-        const transcription = await client.audio.transcriptions.create({
-          file: fs.createReadStream(filePath),
-          model,
-          response_format: responseFormat,
-        });
+        const chunkTranscripts: string[] = [];
+        let detectedLanguageFromChunks: string | undefined;
 
-        const transcript = this.extractTranscript(transcription);
+        for (const chunkFilePath of chunkFiles) {
+          const chunkTranscription = await this.transcribeWithFormats(client, chunkFilePath, model, formats);
+          const chunkTranscript = this.extractTranscript(chunkTranscription).trim();
 
-        if (!transcript.trim()) {
+          if (chunkTranscript) {
+            chunkTranscripts.push(chunkTranscript);
+          }
+
+          const chunkLanguage = this.extractLanguage(chunkTranscription);
+          if (
+            !detectedLanguageFromChunks &&
+            chunkLanguage &&
+            chunkLanguage.toLowerCase() !== 'unknown'
+          ) {
+            detectedLanguageFromChunks = chunkLanguage;
+          }
+        }
+
+        const transcript = chunkTranscripts.join('\n\n').trim();
+
+        if (!transcript) {
           throw new Error('No transcript text returned by the transcription model.');
         }
 
-        const maybeLanguage = this.extractLanguage(transcription);
         const detectedLanguage =
-          maybeLanguage && maybeLanguage !== 'unknown'
-            ? maybeLanguage
-            : await this.detectLanguageFromTranscript(client, transcript);
+          detectedLanguageFromChunks ?? (await this.detectLanguageFromTranscript(client, transcript));
 
         return {
           transcript,
           detectedLanguage,
         };
-      } catch (error) {
-        lastError = error;
+      } finally {
+        fs.rmSync(chunkDir, { recursive: true, force: true });
       }
     }
-
-    const message =
-      lastError instanceof Error
-        ? lastError.message
-        : 'Unable to transcribe audio with any supported response format.';
-    throw new Error(message);
   }
 
   async generateSummaries(transcript: string, detectedLanguage: string) {
@@ -133,6 +153,141 @@ export class OpenAIProvider implements AIProvider {
     }
 
     return undefined;
+  }
+
+  private async transcribeWithFormats(
+    client: OpenAI,
+    filePath: string,
+    model: string,
+    formats: TranscriptionResponseFormat[],
+  ) {
+    let lastError: unknown;
+
+    for (const responseFormat of formats) {
+      try {
+        return await client.audio.transcriptions.create({
+          file: fs.createReadStream(filePath),
+          model,
+          response_format: responseFormat,
+        });
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw this.toError(lastError);
+  }
+
+  private async buildTranscriptionResult(client: OpenAI, transcription: unknown) {
+    const transcript = this.extractTranscript(transcription);
+
+    if (!transcript.trim()) {
+      throw new Error('No transcript text returned by the transcription model.');
+    }
+
+    const maybeLanguage = this.extractLanguage(transcription);
+    const detectedLanguage =
+      maybeLanguage && maybeLanguage !== 'unknown'
+        ? maybeLanguage
+        : await this.detectLanguageFromTranscript(client, transcript);
+
+    return {
+      transcript,
+      detectedLanguage,
+    };
+  }
+
+  private extractMaxDurationSeconds(error: unknown): number | undefined {
+    if (!(error instanceof Error)) {
+      return undefined;
+    }
+
+    const message = error.message.toLowerCase();
+
+    if (!message.includes('maximum') || !message.includes('seconds')) {
+      return undefined;
+    }
+
+    const matches = [...message.matchAll(/([0-9]+(?:\.[0-9]+)?)\s*seconds/gi)];
+    if (matches.length === 0) {
+      return undefined;
+    }
+
+    const parsed = Number(matches[matches.length - 1][1]);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  }
+
+  private async splitAudioForTranscription(filePath: string, maxDurationSeconds: number) {
+    const chunkDurationSeconds = this.resolveChunkDurationSeconds(maxDurationSeconds);
+    const chunkDir = fs.mkdtempSync(join(tmpdir(), 'meeting-assistant-audio-chunks-'));
+    const extension = extname(filePath) || '.webm';
+    const outputPattern = join(chunkDir, `chunk-%03d${extension}`);
+
+    try {
+      await execFileAsync('ffmpeg', [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-i',
+        filePath,
+        '-f',
+        'segment',
+        '-segment_time',
+        String(chunkDurationSeconds),
+        '-c',
+        'copy',
+        outputPattern,
+      ]);
+    } catch (error) {
+      fs.rmSync(chunkDir, { recursive: true, force: true });
+
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'ENOENT'
+      ) {
+        throw new Error(
+          'Audio is longer than the model limit and ffmpeg is not installed. Install ffmpeg or send shorter audio files.',
+        );
+      }
+
+      throw new Error(`Failed to split large audio file for transcription. ${this.toError(error).message}`);
+    }
+
+    const chunkFiles = fs
+      .readdirSync(chunkDir)
+      .sort((a, b) => a.localeCompare(b))
+      .map((name) => join(chunkDir, name))
+      .filter((chunkPath) => fs.statSync(chunkPath).isFile());
+
+    if (chunkFiles.length === 0) {
+      fs.rmSync(chunkDir, { recursive: true, force: true });
+      throw new Error('Failed to split audio into chunks for transcription.');
+    }
+
+    return { chunkDir, chunkFiles };
+  }
+
+  private resolveChunkDurationSeconds(maxDurationSeconds: number) {
+    const configuredChunkSeconds = Number(process.env.OPENAI_TRANSCRIPTION_CHUNK_SECONDS);
+    if (
+      Number.isFinite(configuredChunkSeconds) &&
+      configuredChunkSeconds > 0 &&
+      configuredChunkSeconds < maxDurationSeconds
+    ) {
+      return Math.floor(configuredChunkSeconds);
+    }
+
+    return Math.max(60, Math.floor(maxDurationSeconds * 0.85));
+  }
+
+  private toError(error: unknown) {
+    if (error instanceof Error) {
+      return error;
+    }
+
+    return new Error('Unable to transcribe audio with any supported response format.');
   }
 
   private async detectLanguageFromTranscript(client: OpenAI, transcript: string) {
