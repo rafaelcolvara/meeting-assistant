@@ -31,6 +31,12 @@ export class OpenAIProvider implements AIProvider {
     const client = this.getClient();
     const model = process.env.OPENAI_TRANSCRIPTION_MODEL ?? 'gpt-4o-transcribe';
     const formats: TranscriptionResponseFormat[] = ['verbose_json', 'json', 'text'];
+    const modelMaxSeconds = this.getModelMaxDurationSeconds();
+
+    const durationSeconds = await this.getDurationSeconds(filePath);
+    if (durationSeconds && durationSeconds > modelMaxSeconds) {
+      return this.transcribeFromChunks(client, filePath, model, formats, modelMaxSeconds);
+    }
 
     try {
       const transcription = await this.transcribeWithFormats(client, filePath, model, formats);
@@ -42,46 +48,7 @@ export class OpenAIProvider implements AIProvider {
         throw this.toError(error);
       }
 
-      const { chunkDir, chunkFiles } = await this.splitAudioForTranscription(filePath, maxDurationSeconds);
-
-      try {
-        const chunkTranscripts: string[] = [];
-        let detectedLanguageFromChunks: string | undefined;
-
-        for (const chunkFilePath of chunkFiles) {
-          const chunkTranscription = await this.transcribeWithFormats(client, chunkFilePath, model, formats);
-          const chunkTranscript = this.extractTranscript(chunkTranscription).trim();
-
-          if (chunkTranscript) {
-            chunkTranscripts.push(chunkTranscript);
-          }
-
-          const chunkLanguage = this.extractLanguage(chunkTranscription);
-          if (
-            !detectedLanguageFromChunks &&
-            chunkLanguage &&
-            chunkLanguage.toLowerCase() !== 'unknown'
-          ) {
-            detectedLanguageFromChunks = chunkLanguage;
-          }
-        }
-
-        const transcript = chunkTranscripts.join('\n\n').trim();
-
-        if (!transcript) {
-          throw new Error('No transcript text returned by the transcription model.');
-        }
-
-        const detectedLanguage =
-          detectedLanguageFromChunks ?? (await this.detectLanguageFromTranscript(client, transcript));
-
-        return {
-          transcript,
-          detectedLanguage,
-        };
-      } finally {
-        fs.rmSync(chunkDir, { recursive: true, force: true });
-      }
+      return this.transcribeFromChunks(client, filePath, model, formats, maxDurationSeconds);
     }
   }
 
@@ -155,6 +122,44 @@ export class OpenAIProvider implements AIProvider {
     return undefined;
   }
 
+  private getModelMaxDurationSeconds() {
+    const configured = Number(process.env.OPENAI_TRANSCRIPTION_MODEL_MAX_SECONDS);
+    if (Number.isFinite(configured) && configured > 0) {
+      return configured;
+    }
+
+    return 1400;
+  }
+
+  private async getDurationSeconds(filePath: string): Promise<number | undefined> {
+    try {
+      const { stdout } = await execFileAsync('ffprobe', [
+        '-v',
+        'error',
+        '-show_entries',
+        'format=duration',
+        '-of',
+        'default=noprint_wrappers=1:nokey=1',
+        filePath,
+      ]);
+
+      const value = parseFloat(String(stdout).trim());
+      return Number.isFinite(value) && value > 0 ? value : undefined;
+    } catch (error) {
+      // If ffprobe is unavailable, fall back to API-based duration enforcement
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        (error as { code?: string }).code === 'ENOENT'
+      ) {
+        return undefined;
+      }
+
+      return undefined;
+    }
+  }
+
   private async transcribeWithFormats(
     client: OpenAI,
     filePath: string,
@@ -176,6 +181,55 @@ export class OpenAIProvider implements AIProvider {
     }
 
     throw this.toError(lastError);
+  }
+
+  private async transcribeFromChunks(
+    client: OpenAI,
+    filePath: string,
+    model: string,
+    formats: TranscriptionResponseFormat[],
+    maxDurationSeconds: number,
+  ) {
+    const { chunkDir, chunkFiles } = await this.splitAudioForTranscription(filePath, maxDurationSeconds);
+
+    try {
+      const chunkTranscripts: string[] = [];
+      let detectedLanguageFromChunks: string | undefined;
+
+      for (const chunkFilePath of chunkFiles) {
+        const chunkTranscription = await this.transcribeWithFormats(client, chunkFilePath, model, formats);
+        const chunkTranscript = this.extractTranscript(chunkTranscription).trim();
+
+        if (chunkTranscript) {
+          chunkTranscripts.push(chunkTranscript);
+        }
+
+        const chunkLanguage = this.extractLanguage(chunkTranscription);
+        if (
+          !detectedLanguageFromChunks &&
+          chunkLanguage &&
+          chunkLanguage.toLowerCase() !== 'unknown'
+        ) {
+          detectedLanguageFromChunks = chunkLanguage;
+        }
+      }
+
+      const transcript = chunkTranscripts.join('\n\n').trim();
+
+      if (!transcript) {
+        throw new Error('No transcript text returned by the transcription model.');
+      }
+
+      const detectedLanguage =
+        detectedLanguageFromChunks ?? (await this.detectLanguageFromTranscript(client, transcript));
+
+      return {
+        transcript,
+        detectedLanguage,
+      };
+    } finally {
+      fs.rmSync(chunkDir, { recursive: true, force: true });
+    }
   }
 
   private async buildTranscriptionResult(client: OpenAI, transcription: unknown) {
