@@ -23,6 +23,9 @@ type AudioSession = {
   chunkCount: number;
   chunkBytes: number;
   startedAt: number;
+  bufferSize: number;
+  maxBufferSize: number;
+  processingChunk: boolean;
 };
 
 const uploadsDir = join(process.cwd(), 'uploads');
@@ -30,6 +33,12 @@ const uploadsDir = join(process.cwd(), 'uploads');
 if (!existsSync(uploadsDir)) {
   mkdirSync(uploadsDir, { recursive: true });
 }
+
+// Configuration for memory management
+const MAX_WEBSOCKET_BUFFER_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_AUDIO_BUFFER_SIZE = 100 * 1024 * 1024; // 100MB per session
+const CHUNK_PROCESSING_TIMEOUT = 30000; // 30 seconds
+const MAX_AUDIO_DURATION_MS = 4 * 60 * 60 * 1000; // 4 hours (increased from 2)
 
 type WsFrame = {
   fin: boolean;
@@ -273,6 +282,22 @@ async function bootstrap() {
     };
 
     socket.on('data', (chunk) => {
+      // Prevent unbounded buffer growth
+      if (dataBuffer.length + chunk.length > MAX_WEBSOCKET_BUFFER_SIZE) {
+        console.error('[ws][backend]', streamId, 'WebSocket buffer size limit exceeded', {
+          currentSize: dataBuffer.length,
+          incomingSize: chunk.length,
+          maxSize: MAX_WEBSOCKET_BUFFER_SIZE,
+        });
+        sendWsMessage(socket, {
+          type: 'error',
+          error: 'WebSocket buffer overflow - connection will be closed'
+        });
+        cleanupSession();
+        socket.end();
+        return;
+      }
+
       dataBuffer = Buffer.concat([dataBuffer, Buffer.from(chunk)]);
       const { frames, remaining } = parseWebSocketFrames(dataBuffer);
       dataBuffer = Buffer.from(remaining);
@@ -342,6 +367,9 @@ async function bootstrap() {
               chunkCount: 0,
               chunkBytes: 0,
               startedAt: Date.now(),
+              bufferSize: 0,
+              maxBufferSize: MAX_AUDIO_BUFFER_SIZE,
+              processingChunk: false,
             };
 
             console.info('[ws][backend]', streamId, 'stream started', { fileName, mimeType });
@@ -370,15 +398,41 @@ async function bootstrap() {
             }
 
             const chunkBuffer = Buffer.from(chunkBase64, 'base64');
+
+            // Check buffer size limits for backpressure
+            if (session.bufferSize + chunkBuffer.byteLength > session.maxBufferSize) {
+              console.warn('[ws][backend]', streamId, 'buffer size limit exceeded, dropping chunk', {
+                currentBuffer: session.bufferSize,
+                chunkSize: chunkBuffer.byteLength,
+                maxBuffer: session.maxBufferSize,
+              });
+              sendWsMessage(socket, {
+                type: 'warning',
+                message: 'Audio buffer full, some data may be lost'
+              });
+              continue;
+            }
+
             session.chunkCount += 1;
             session.chunkBytes += chunkBuffer.byteLength;
+            session.bufferSize += chunkBuffer.byteLength;
+
             if (session.chunkCount % 20 === 0) {
               console.info('[ws][backend]', streamId, 'chunk stats', {
                 chunkCount: session.chunkCount,
                 chunkBytes: session.chunkBytes,
+                bufferSize: session.bufferSize,
               });
             }
-            session.writeStream.write(chunkBuffer);
+
+            // Write chunk and update buffer size when written
+            session.writeStream.write(chunkBuffer, (error) => {
+              if (error) {
+                console.error('[ws][backend]', streamId, 'chunk write error', { error: error.message });
+              } else {
+                session.bufferSize = Math.max(0, session.bufferSize - chunkBuffer.byteLength);
+              }
+            });
             continue;
           }
 
@@ -396,17 +450,33 @@ async function bootstrap() {
 
             completedSession.writeStream.end(async () => {
               try {
-                if (completedSession.durationMs > 2 * 60 * 60 * 1000) {
-                  throw new Error('Audio exceeds the maximum duration of 2 hours.');
+                if (completedSession.durationMs > MAX_AUDIO_DURATION_MS) {
+                  throw new Error(`Audio exceeds the maximum duration of ${MAX_AUDIO_DURATION_MS / (60 * 60 * 1000)} hours.`);
                 }
 
                 console.info('[ws][backend]', streamId, 'processing started', {
                   filePath: completedSession.filePath,
                 });
+
+                // Send progress updates during processing
+                sendWsMessage(socket, {
+                  type: 'progress',
+                  stage: 'starting',
+                  message: 'Processing audio file...'
+                });
+
                 const result = await meetingService.processAudio({
                   path: completedSession.filePath,
                   originalname: completedSession.fileName,
                   mimetype: completedSession.mimeType,
+                }, (progress) => {
+                  // Progress callback to send updates to client
+                  sendWsMessage(socket, {
+                    type: 'progress',
+                    stage: progress.stage,
+                    message: progress.message,
+                    percentage: progress.percentage,
+                  });
                 });
 
                 console.info('[ws][backend]', streamId, 'processing completed');

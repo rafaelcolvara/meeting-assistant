@@ -20,7 +20,10 @@ const mimeTypeToExtension: Record<string, string> = {
 export class MeetingService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async processAudio(file: { path: string; originalname: string; mimetype?: string }) {
+  async processAudio(
+    file: { path: string; originalname: string; mimetype?: string },
+    progressCallback?: (progress: { stage: string; message: string; percentage?: number }) => void
+  ) {
     const sourcePath = file.path;
 
     if (!sourcePath || !existsSync(sourcePath)) {
@@ -38,11 +41,31 @@ export class MeetingService {
 
     try {
       const provider = getAIProvider();
+
+      progressCallback?.({
+        stage: 'transcription',
+        message: 'Transcribing audio...',
+        percentage: 20
+      });
+
       const transcription = await provider.transcribeAudio(filePath);
+
+      progressCallback?.({
+        stage: 'summarization',
+        message: 'Generating summaries...',
+        percentage: 70
+      });
+
       const summaries = await provider.generateSummaries(
         transcription.transcript,
         transcription.detectedLanguage,
       );
+
+      progressCallback?.({
+        stage: 'saving',
+        message: 'Saving results...',
+        percentage: 90
+      });
 
       const meetingContext = await this.prisma.meetingContext.create({
         data: {

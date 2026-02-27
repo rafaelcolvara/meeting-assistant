@@ -37,7 +37,7 @@ export class MeetingController {
     FileInterceptor('audio', {
       dest: uploadsDir,
       limits: {
-        fileSize: 25 * 1024 * 1024,
+        fileSize: 200 * 1024 * 1024, // Increased to 200MB for large audio files
       },
     }),
   )

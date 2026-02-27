@@ -169,18 +169,61 @@ export class OpenAIProvider implements AIProvider {
     let lastError: unknown;
 
     for (const responseFormat of formats) {
-      try {
-        return await client.audio.transcriptions.create({
-          file: fs.createReadStream(filePath),
-          model,
-          response_format: responseFormat,
-        });
-      } catch (error) {
-        lastError = error;
+      const maxRetries = 3;
+      let attempt = 0;
+
+      while (attempt < maxRetries) {
+        try {
+          // Add timeout to transcription requests
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Transcription request timeout after 5 minutes')), 300000)
+          );
+
+          const transcriptionPromise = client.audio.transcriptions.create({
+            file: fs.createReadStream(filePath),
+            model,
+            response_format: responseFormat,
+          });
+
+          const result = await Promise.race([transcriptionPromise, timeoutPromise]);
+          return result as any; // TypeScript workaround for Promise.race
+        } catch (error) {
+          lastError = error;
+          attempt++;
+
+          // Check if it's a rate limit error or temporary server error
+          const isRetryableError = this.isRetryableError(error);
+
+          if (attempt < maxRetries && isRetryableError) {
+            const delay = Math.min(1000 * Math.pow(2, attempt), 30000); // Exponential backoff, max 30s
+            console.warn('[transcription]', `Attempt ${attempt} failed, retrying in ${delay}ms`, { error: this.toError(error).message });
+            await new Promise(resolve => setTimeout(resolve, delay));
+          } else {
+            break; // Exit retry loop and try next format
+          }
+        }
       }
     }
 
     throw this.toError(lastError);
+  }
+
+  private isRetryableError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    const message = error.message.toLowerCase();
+
+    // Retry on rate limits, temporary server errors, timeouts
+    return (
+      message.includes('rate limit') ||
+      message.includes('too many requests') ||
+      message.includes('server error') ||
+      message.includes('timeout') ||
+      message.includes('service unavailable') ||
+      message.includes('temporarily unavailable')
+    );
   }
 
   private async transcribeFromChunks(
@@ -193,35 +236,72 @@ export class OpenAIProvider implements AIProvider {
     const { chunkDir, chunkFiles } = await this.splitAudioForTranscription(filePath, maxDurationSeconds);
 
     try {
-      const chunkTranscripts: string[] = [];
-      let detectedLanguageFromChunks: string | undefined;
+      console.info('[transcription]', `Processing ${chunkFiles.length} chunks in parallel`);
 
-      for (const chunkFilePath of chunkFiles) {
-        const chunkTranscription = await this.transcribeWithFormats(client, chunkFilePath, model, formats);
-        const chunkTranscript = this.extractTranscript(chunkTranscription).trim();
+      // Process chunks in parallel with limited concurrency
+      const maxConcurrency = Math.min(5, Math.max(1, chunkFiles.length)); // Max 5 concurrent requests
+      const results: Array<{
+        index: number;
+        transcript: string;
+        language?: string;
+      }> = [];
 
-        if (chunkTranscript) {
-          chunkTranscripts.push(chunkTranscript);
-        }
+      // Process chunks in batches
+      for (let i = 0; i < chunkFiles.length; i += maxConcurrency) {
+        const batch = chunkFiles.slice(i, i + maxConcurrency);
+        const batchPromises = batch.map(async (chunkFilePath, batchIndex) => {
+          const chunkIndex = i + batchIndex;
 
-        const chunkLanguage = this.extractLanguage(chunkTranscription);
-        if (
-          !detectedLanguageFromChunks &&
-          chunkLanguage &&
-          chunkLanguage.toLowerCase() !== 'unknown'
-        ) {
-          detectedLanguageFromChunks = chunkLanguage;
+          try {
+            console.info('[transcription]', `Processing chunk ${chunkIndex + 1}/${chunkFiles.length}`);
+
+            const chunkTranscription = await this.transcribeWithFormats(client, chunkFilePath, model, formats);
+            const chunkTranscript = this.extractTranscript(chunkTranscription).trim();
+            const chunkLanguage = this.extractLanguage(chunkTranscription);
+
+            return {
+              index: chunkIndex,
+              transcript: chunkTranscript,
+              language: chunkLanguage && chunkLanguage.toLowerCase() !== 'unknown' ? chunkLanguage : undefined,
+            };
+          } catch (error) {
+            console.error('[transcription]', `Error processing chunk ${chunkIndex + 1}:`, error);
+            // Return empty result for failed chunks instead of failing entirely
+            return {
+              index: chunkIndex,
+              transcript: '',
+              language: undefined,
+            };
+          }
+        });
+
+        const batchResults = await Promise.all(batchPromises);
+        results.push(...batchResults);
+
+        // Add small delay between batches to avoid rate limiting
+        if (i + maxConcurrency < chunkFiles.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
+
+      // Sort results by original chunk order and extract transcripts
+      results.sort((a, b) => a.index - b.index);
+      const chunkTranscripts = results
+        .filter(result => result.transcript)
+        .map(result => result.transcript);
+
+      const detectedLanguageFromChunks = results.find(result => result.language)?.language;
 
       const transcript = chunkTranscripts.join('\n\n').trim();
 
       if (!transcript) {
-        throw new Error('No transcript text returned by the transcription model.');
+        throw new Error('No transcript text returned by the transcription model after processing all chunks.');
       }
 
       const detectedLanguage =
         detectedLanguageFromChunks ?? (await this.detectLanguageFromTranscript(client, transcript));
+
+      console.info('[transcription]', `Completed processing ${chunkFiles.length} chunks, total transcript length: ${transcript.length}`);
 
       return {
         transcript,
@@ -277,23 +357,45 @@ export class OpenAIProvider implements AIProvider {
     const extension = extname(filePath) || '.webm';
     const outputPattern = join(chunkDir, `chunk-%03d${extension}`);
 
+    console.info('[transcription]', `Splitting audio into ${chunkDurationSeconds}s chunks`, {
+      filePath: filePath.split('/').pop(),
+      maxDuration: maxDurationSeconds,
+      chunkDuration: chunkDurationSeconds,
+    });
+
     try {
+      // Enhanced ffmpeg command with better error handling and compression
       await execFileAsync('ffmpeg', [
         '-hide_banner',
         '-loglevel',
-        'error',
+        'warning', // More verbose logging for debugging
         '-i',
         filePath,
         '-f',
         'segment',
         '-segment_time',
         String(chunkDurationSeconds),
-        '-c',
-        'copy',
+        '-segment_format_options',
+        'movflags=faststart', // Optimize for streaming
+        '-avoid_negative_ts',
+        'make_zero', // Avoid timestamp issues
+        '-c:a',
+        'aac', // Use efficient codec
+        '-b:a',
+        '64k', // Lower bitrate for faster processing
+        '-ar',
+        '16000', // Lower sample rate for transcription (OpenAI Whisper works well with this)
+        '-ac',
+        '1', // Mono audio for transcription
         outputPattern,
       ]);
     } catch (error) {
-      fs.rmSync(chunkDir, { recursive: true, force: true });
+      // Clean up on failure
+      try {
+        fs.rmSync(chunkDir, { recursive: true, force: true });
+      } catch (cleanupError) {
+        console.warn('[transcription]', 'Failed to cleanup chunk directory after error', cleanupError);
+      }
 
       if (
         typeof error === 'object' &&
@@ -306,19 +408,29 @@ export class OpenAIProvider implements AIProvider {
         );
       }
 
+      console.error('[transcription]', 'ffmpeg error details:', error);
       throw new Error(`Failed to split large audio file for transcription. ${this.toError(error).message}`);
     }
 
     const chunkFiles = fs
       .readdirSync(chunkDir)
-      .sort((a, b) => a.localeCompare(b))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) // Better numeric sorting
       .map((name) => join(chunkDir, name))
-      .filter((chunkPath) => fs.statSync(chunkPath).isFile());
+      .filter((chunkPath) => {
+        try {
+          const stats = fs.statSync(chunkPath);
+          return stats.isFile() && stats.size > 0; // Filter out empty files
+        } catch {
+          return false;
+        }
+      });
 
     if (chunkFiles.length === 0) {
       fs.rmSync(chunkDir, { recursive: true, force: true });
-      throw new Error('Failed to split audio into chunks for transcription.');
+      throw new Error('Failed to split audio into chunks for transcription - no valid chunks created.');
     }
+
+    console.info('[transcription]', `Successfully created ${chunkFiles.length} audio chunks`);
 
     return { chunkDir, chunkFiles };
   }
@@ -333,7 +445,9 @@ export class OpenAIProvider implements AIProvider {
       return Math.floor(configuredChunkSeconds);
     }
 
-    return Math.max(60, Math.floor(maxDurationSeconds * 0.85));
+    // Use 80% of max duration instead of 85% to be more conservative
+    // Also ensure minimum chunk size is reasonable for transcription quality
+    return Math.max(120, Math.floor(maxDurationSeconds * 0.8)); // Minimum 2 minutes per chunk
   }
 
   private toError(error: unknown) {

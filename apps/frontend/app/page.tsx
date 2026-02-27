@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-const MAX_RECORDING_MS = 2 * 60 * 60 * 1000;
+const MAX_RECORDING_MS = 4 * 60 * 60 * 1000; // Increased to 4 hours
 
 type ProcessResult = {
   savedFileName: string;
@@ -107,6 +107,11 @@ export default function HomePage() {
   const [recordedDurationMs, setRecordedDurationMs] = useState(0);
   const [currentRecordingMs, setCurrentRecordingMs] = useState(0);
   const [result, setResult] = useState<ProcessResult | null>(null);
+  const [processingProgress, setProcessingProgress] = useState<{
+    stage: string;
+    message: string;
+    percentage?: number;
+  } | null>(null);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -200,15 +205,32 @@ export default function HomePage() {
         console.info('[ws][frontend]', streamId, 'ack', payload);
       }
 
+      if (type === 'progress') {
+        console.info('[ws][frontend]', streamId, 'progress update', payload);
+        setProcessingProgress({
+          stage: String(payload.stage ?? ''),
+          message: String(payload.message ?? ''),
+          percentage: typeof payload.percentage === 'number' ? payload.percentage : undefined,
+        });
+      }
+
       if (type === 'result') {
         console.info('[ws][frontend]', streamId, 'result received');
+        setProcessingProgress(null);
         wsResultResolverRef.current?.(normalizeProcessResult(payload));
         cleanupSocket();
         return;
       }
 
+      if (type === 'warning') {
+        console.warn('[ws][frontend]', streamId, 'backend warning', payload);
+        // Show warning to user but don't fail the connection
+        setStatus(`aviso: ${String(payload.message ?? 'aviso do servidor')}`);
+      }
+
       if (type === 'error') {
         console.error('[ws][frontend]', streamId, 'backend error', payload);
+        setProcessingProgress(null);
         wsResultRejectorRef.current?.(new Error(String(payload.error ?? 'falha ao processar áudio')));
         cleanupSocket();
       }
@@ -433,7 +455,7 @@ export default function HomePage() {
 
   const finishedWithContent = !isRecording && !isProcessing && Boolean(result);
   const centerMessage = isProcessing
-    ? 'Processando...'
+    ? (processingProgress?.message ?? 'Processando...')
     : isRecording
       ? formatDuration(currentRecordingMs)
       : finishedWithContent
@@ -523,6 +545,20 @@ export default function HomePage() {
             <span className="timer idle-label">Toque no botão para iniciar</span>
           )}
         </div>
+
+        {isProcessing && processingProgress?.percentage && (
+          <div className="progress-container">
+            <div className="progress-bar">
+              <div
+                className="progress-fill"
+                style={{ width: `${processingProgress.percentage}%` }}
+              />
+            </div>
+            <span className="progress-text">
+              {processingProgress.percentage}% - {processingProgress.stage}
+            </span>
+          </div>
+        )}
       </section>
 
       <section className="result-grid">
@@ -730,6 +766,36 @@ export default function HomePage() {
         .idle-label {
           color: #56617a;
           font-size: 16px;
+        }
+
+        .progress-container {
+          margin-top: 16px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px;
+          width: 240px;
+        }
+
+        .progress-bar {
+          width: 100%;
+          height: 8px;
+          background: #d0d9e6;
+          border-radius: 4px;
+          overflow: hidden;
+        }
+
+        .progress-fill {
+          height: 100%;
+          background: linear-gradient(90deg, #2f72c7, #4a8bdb);
+          border-radius: 4px;
+          transition: width 0.3s ease;
+        }
+
+        .progress-text {
+          font-size: 12px;
+          color: #44516a;
+          font-weight: 500;
         }
 
         .result-grid {
