@@ -426,11 +426,12 @@ async function bootstrap() {
             }
 
             // Write chunk and update buffer size when written
+            const currentSession = session; // Capture session reference for callback
             session.writeStream.write(chunkBuffer, (error) => {
               if (error) {
                 console.error('[ws][backend]', streamId, 'chunk write error', { error: error.message });
-              } else {
-                session.bufferSize = Math.max(0, session.bufferSize - chunkBuffer.byteLength);
+              } else if (currentSession) {
+                currentSession.bufferSize = Math.max(0, currentSession.bufferSize - chunkBuffer.byteLength);
               }
             });
             continue;
