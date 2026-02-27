@@ -33,20 +33,67 @@ export class OpenAIProvider implements AIProvider {
     const formats: TranscriptionResponseFormat[] = ['verbose_json', 'json', 'text'];
     const modelMaxSeconds = this.getModelMaxDurationSeconds();
 
-    const durationSeconds = await this.getDurationSeconds(filePath);
-    if (durationSeconds && durationSeconds > modelMaxSeconds) {
+    console.info('[transcription]', 'Starting transcription', {
+      filePath: filePath.split('/').pop(),
+      modelMaxSeconds
+    });
+
+    // Check for force chunking mode (useful for debugging)
+    const forceChunking = process.env.OPENAI_FORCE_CHUNKING === 'true';
+    if (forceChunking) {
+      console.info('[transcription]', 'Force chunking mode enabled, skipping direct transcription');
       return this.transcribeFromChunks(client, filePath, model, formats, modelMaxSeconds);
     }
 
+    const durationSeconds = await this.getDurationSeconds(filePath);
+    console.info('[transcription]', 'Duration detection result', {
+      durationSeconds,
+      exceedsLimit: durationSeconds && durationSeconds > modelMaxSeconds
+    });
+
+    // If we detected duration and it exceeds limit, go straight to chunking
+    if (durationSeconds && durationSeconds > modelMaxSeconds) {
+      console.info('[transcription]', 'Audio exceeds limit, using chunking approach');
+      return this.transcribeFromChunks(client, filePath, model, formats, modelMaxSeconds);
+    }
+
+    // For very large files (>25MB), assume they might be long and go straight to chunking
     try {
+      const fs = await import('node:fs');
+      const stats = fs.statSync(filePath);
+      const fileSizeMB = stats.size / (1024 * 1024);
+
+      console.info('[transcription]', 'File size check', { fileSizeMB });
+
+      // Use more conservative file size threshold for auto-chunking
+      // Rough estimate: 1MB per minute of audio for typical recordings
+      if (fileSizeMB > 15) { // ~15 minutes worth, well under the 23-minute limit
+        console.info('[transcription]', 'Large file detected, using chunking approach as precaution');
+        return this.transcribeFromChunks(client, filePath, model, formats, modelMaxSeconds);
+      }
+    } catch (sizeError) {
+      console.warn('[transcription]', 'Could not check file size', sizeError);
+    }
+
+    try {
+      console.info('[transcription]', 'Attempting direct transcription');
       const transcription = await this.transcribeWithFormats(client, filePath, model, formats);
       return this.buildTranscriptionResult(client, transcription);
     } catch (error) {
+      console.warn('[transcription]', 'Direct transcription failed, checking for duration error', {
+        error: this.toError(error).message
+      });
+
       const maxDurationSeconds = this.extractMaxDurationSeconds(error);
 
       if (!maxDurationSeconds) {
+        console.error('[transcription]', 'Non-duration error, failing');
         throw this.toError(error);
       }
+
+      console.info('[transcription]', 'Duration limit error detected, falling back to chunking', {
+        extractedMaxDuration: maxDurationSeconds
+      });
 
       return this.transcribeFromChunks(client, filePath, model, formats, maxDurationSeconds);
     }
@@ -133,6 +180,8 @@ export class OpenAIProvider implements AIProvider {
 
   private async getDurationSeconds(filePath: string): Promise<number | undefined> {
     try {
+      console.info('[transcription]', 'Attempting to detect duration with ffprobe');
+
       const { stdout } = await execFileAsync('ffprobe', [
         '-v',
         'error',
@@ -141,11 +190,23 @@ export class OpenAIProvider implements AIProvider {
         '-of',
         'default=noprint_wrappers=1:nokey=1',
         filePath,
-      ]);
+      ], { timeout: 10000 }); // 10 second timeout
 
       const value = parseFloat(String(stdout).trim());
-      return Number.isFinite(value) && value > 0 ? value : undefined;
+      const duration = Number.isFinite(value) && value > 0 ? value : undefined;
+
+      console.info('[transcription]', 'Duration detection successful', {
+        duration,
+        durationMinutes: duration ? (duration / 60).toFixed(1) : 'unknown'
+      });
+
+      return duration;
     } catch (error) {
+      console.warn('[transcription]', 'Duration detection failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        isENOENT: error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'
+      });
+
       // If ffprobe is unavailable, fall back to API-based duration enforcement
       if (
         typeof error === 'object' &&
@@ -153,9 +214,12 @@ export class OpenAIProvider implements AIProvider {
         'code' in error &&
         (error as { code?: string }).code === 'ENOENT'
       ) {
+        console.warn('[transcription]', 'ffprobe not installed - duration detection disabled');
         return undefined;
       }
 
+      // For other errors (timeout, file issues, etc.), also return undefined
+      // This allows the system to attempt direct transcription first
       return undefined;
     }
   }
@@ -338,17 +402,46 @@ export class OpenAIProvider implements AIProvider {
 
     const message = error.message.toLowerCase();
 
-    if (!message.includes('maximum') || !message.includes('seconds')) {
-      return undefined;
+    console.info('[transcription]', 'Analyzing error for duration limit', {
+      errorMessage: error.message,
+      isDurationError: message.includes('duration') || message.includes('longer than') || message.includes('maximum')
+    });
+
+    // Check for various duration error patterns
+    const durationErrorPatterns = [
+      // "audio duration 1800.056 seconds is longer than 1400 seconds"
+      /audio duration [0-9]+(?:\.[0-9]+)? seconds is longer than ([0-9]+(?:\.[0-9]+)?)\s*seconds/i,
+      // "maximum ... seconds"
+      /maximum.*?([0-9]+(?:\.[0-9]+)?)\s*seconds/i,
+      // "longer than X seconds which is the maximum"
+      /longer than ([0-9]+(?:\.[0-9]+)?)\s*seconds.*maximum/i,
+      // Generic "X seconds" patterns
+      /([0-9]+(?:\.[0-9]+)?)\s*seconds.*(?:maximum|limit)/i,
+      /(?:maximum|limit).*?([0-9]+(?:\.[0-9]+)?)\s*seconds/i,
+    ];
+
+    for (const pattern of durationErrorPatterns) {
+      const match = message.match(pattern);
+      if (match && match[1]) {
+        const parsed = Number(match[1]);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          console.info('[transcription]', 'Extracted max duration from error', {
+            pattern: pattern.source,
+            extractedDuration: parsed
+          });
+          return parsed;
+        }
+      }
     }
 
-    const matches = [...message.matchAll(/([0-9]+(?:\.[0-9]+)?)\s*seconds/gi)];
-    if (matches.length === 0) {
-      return undefined;
+    // If no specific duration found but it's clearly a duration error, use default
+    if (message.includes('duration') && (message.includes('longer') || message.includes('maximum') || message.includes('limit'))) {
+      console.info('[transcription]', 'Duration error detected but could not extract limit, using default 1400s');
+      return 1400; // Default OpenAI Whisper limit
     }
 
-    const parsed = Number(matches[matches.length - 1][1]);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+    console.info('[transcription]', 'Error does not appear to be duration-related');
+    return undefined;
   }
 
   private async splitAudioForTranscription(filePath: string, maxDurationSeconds: number) {
